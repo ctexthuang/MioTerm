@@ -135,11 +135,11 @@ fn auto_check(this: &Entity<SettingsWindow>, on: bool) -> Switch {
 fn updates_row(cx: &App) -> SettingsRow {
     let found = cx.global::<Updates>();
     let status: SharedString = match found {
-        Updates::Unchecked => format!("ELYTerminal {VERSION}").into(),
+        Updates::Unchecked => format!("{} {VERSION}", workspace::TITLE).into(),
         Updates::Checking => "Checking for a newer release…".into(),
-        Updates::Latest => format!("ELYTerminal {VERSION} is the latest").into(),
+        Updates::Latest => format!("{} {VERSION} is the latest", workspace::TITLE).into(),
         Updates::Newer { version, .. } => {
-            format!("ELYTerminal {version} is out; this is {VERSION}").into()
+            format!("{} {version} is out; this is {VERSION}", workspace::TITLE).into()
         }
         Updates::Failed(why) => format!("The check failed: {why}").into(),
     };

@@ -14,7 +14,7 @@
 - 本修改版主要扩展 SSH、SFTP、远程 Git、系统监控、WebDAV 同步及相关交互，不将这些新增功能归为上游已发布功能。
 - 原项目的版权声明、MIT 许可证和第三方许可文件予以保留。感谢原作者和所有上游贡献者。
 
-当前 `Cargo.toml` 的版本号为 `0.1.7`，修改版仍在开发中。上游 GitHub Releases 提供的是原项目发行包，**不代表包含本 README 描述的 SSH 增强功能**；体验本修改版请构建本仓库源码。
+当前 `Cargo.toml` 的版本号为 `0.1.8`，修改版仍在开发中。测试包通过本仓库的 Releases 以 Preview 预发布形式提供；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
 
 ## 当前功能
 
@@ -156,13 +156,13 @@ sudo apt-get install pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11
   libxcb1-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev libdbus-1-dev
 ```
 
-原项目的打包脚本仍保留：
+打包脚本基于原项目调整，应用显示名与发行包名使用 MioTerm，Rust crate 和已有配置目录仍保留原名称：
 
 - macOS：`scripts/mac-app.sh`。
 - Windows：`scripts/windows-zip.ps1`。
 - Linux：`scripts/linux-tar.sh`，需要 Docker。
 
-本地 macOS 打包默认使用 ad-hoc 签名，不能视为已获得原作者的 Developer ID 签名或公证。修改版发行入口为 [MioTerm Releases](https://github.com/ctexthuang/MioTerm/releases)，仅在发布构建后提供下载。
+macOS 打包默认使用 ad-hoc 签名，不包含 Developer ID 签名或 Apple 公证；Windows 测试包也没有发布者签名，系统可能提示安全警告。修改版发行入口为 [MioTerm Releases](https://github.com/ctexthuang/MioTerm/releases)，仅在发布构建后提供下载。安装包附带项目及现有第三方许可文件。
 
 ## 快捷键
 
@@ -226,7 +226,11 @@ git merge upstream/main
 
 合并冲突需要逐项处理，保留 MioTerm 的 SSH 增强功能、仓库地址和更新来源。完成测试后，再执行 `git push origin main`。上游代码同步与应用发行更新是两条独立流程，不会在启动时自动合并源码或覆盖本地改动。
 
-发布附件脚本 `scripts/release-asset.sh` 默认上传到 `ctexthuang/MioTerm`。继承的 CI 和签名发布工作流还需要配置自己的 runner、签名身份与 Secrets，不能直接使用原作者的签名配置。
+CI 使用 GitHub 托管的 macOS、Windows 和 Ubuntu runner，不需要原作者的自托管机器；macOS 会安装 shell 测试需要的 fish，Linux 保留原有的容器测试环境。CI 负责检查、测试和编译，不会自动发布安装包。
+
+手动触发的 Release 工作流使用 GitHub 托管环境构建 macOS arm64、Windows x86_64 和 Linux x86_64 安装包。三端打包均成功后，以当前版本创建 Preview 预发布，附上安装包与 SHA-256 校验文件；不使用原作者的签名身份或私钥，也不会覆盖上游的旧版本标签。发布后再次构建需要先提升版本号。
+
+发布附件脚本 `scripts/release-asset.sh` 默认上传到 `ctexthuang/MioTerm`。日后配置自己的 Developer ID 和公证凭据后，`scripts/mac-app.sh` 仍支持正式签名与公证；默认测试构建不需要这些凭据。
 
 ## 许可证与致谢
 

@@ -79,7 +79,7 @@ fn finish(found: anyhow::Result<Option<(String, String)>>, auto: bool, cx: &mut 
                 cx.show_system_notification(SystemNotification {
                     tag: TAG.into(),
                     title: TITLE.into(),
-                    body: format!("ELYTerminal {version} is out. Press to open its page.").into(),
+                    body: format!("{TITLE} {version} is out. Press to open its page.").into(),
                     actions: Vec::new(),
                 });
             }

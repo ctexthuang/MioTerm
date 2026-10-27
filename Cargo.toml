@@ -1,10 +1,10 @@
 [package]
 name = "elyterminal"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
-description = "A terminal on GPUI and Ely."
+description = "MioTerm, an SSH terminal on GPUI and Ely."
 repository = "https://github.com/ctexthuang/MioTerm"
 publish = false
 

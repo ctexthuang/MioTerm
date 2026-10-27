@@ -174,7 +174,9 @@ fn mouse(name: &str, flags: u64, number: u32) -> anyhow::Result<()> {
         let frame: CGRect = msg_send![content, frame];
         let height = frame.size.height;
         let points: Vec<CGPoint> = numbers
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| CGPoint::new(pair[0], height - pair[1]))
             .collect();
         let screens: *mut Object = msg_send![class!(NSScreen), screens];

@@ -1,4 +1,5 @@
 # windows-zip.ps1: the release build, its icon inside, in a zip.
+$ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..') -ErrorAction Stop
 cargo build --release --locked
 if ($LASTEXITCODE -ne 0) { throw "windows-zip: cargo build failed" }
@@ -8,6 +9,18 @@ $arch = @{ AMD64 = 'x86_64'; ARM64 = 'aarch64' }[$env:PROCESSOR_ARCHITECTURE]
 if (-not $arch) { throw "windows-zip: no name for $env:PROCESSOR_ARCHITECTURE" }
 $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
 $out = Join-Path $target 'release'
-$zip = Join-Path $out "ELYTerminal-$version-windows-$arch.zip"
-Compress-Archive -Force -Path (Join-Path $out 'elyterminal.exe') -DestinationPath $zip -ErrorAction Stop
+$zip = Join-Path $out "MioTerm-$version-windows-$arch.zip"
+$work = Join-Path ([IO.Path]::GetTempPath()) ("mioterm-" + [guid]::NewGuid())
+try {
+    New-Item -ItemType Directory -Path "$work/licenses/fonts", "$work/licenses/themes" | Out-Null
+    Copy-Item (Join-Path $out 'elyterminal.exe') (Join-Path $work 'MioTerm.exe')
+    Copy-Item LICENSE, LICENSE-GHOSTTY (Join-Path $work 'licenses')
+    Copy-Item assets/fonts/*LICENSE.txt (Join-Path $work 'licenses/fonts')
+    Copy-Item assets/themes/LICENSE (Join-Path $work 'licenses/themes')
+    Copy-Item README.md $work
+    Compress-Archive -Force -Path "$work/*" -DestinationPath $zip
+}
+finally {
+    if (Test-Path $work) { Remove-Item -Recurse -Force $work }
+}
 Write-Output "windows-zip: $zip"

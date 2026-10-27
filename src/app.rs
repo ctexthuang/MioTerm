@@ -21,7 +21,7 @@ use crate::{
 const SETTLE: Duration = Duration::from_millis(500);
 
 /// The id the macOS bundle and Linux desktop entry share.
-pub const APP_ID: &str = "com.zacharyzhang.elyterminal";
+pub const APP_ID: &str = "io.github.ctexthuang.mioterm";
 
 /// Fonts, settings, integration scripts and the chosen font, each checked before a window opens.
 pub fn start(cx: &mut App) -> anyhow::Result<()> {

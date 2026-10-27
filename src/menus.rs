@@ -4,7 +4,7 @@ use gpui::{App, InteractiveElement, KeyBinding, Menu, MenuItem, OsAction, action
 use crate::{
     settings::window::OpenSettings,
     term::{input::Find, zoom},
-    workspace::{CloseSession, NewSession, TogglePanel, ToggleSessions},
+    workspace::{CloseSession, NewSession, TITLE, TogglePanel, ToggleSessions},
 };
 
 actions!(
@@ -21,11 +21,11 @@ pub fn menus() -> Vec<Menu> {
     };
     vec![
         menu(
-            "ELYTerminal",
+            TITLE,
             vec![
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::separator(),
-                MenuItem::action("Quit ELYTerminal", Quit),
+                MenuItem::action("Quit MioTerm", Quit),
             ],
         ),
         menu(

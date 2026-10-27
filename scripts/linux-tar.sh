@@ -16,17 +16,22 @@ version=$(run cargo pkgid)
 version=${version##*[#@]}
 case $version in [0-9]*) ;; *) echo "linux-tar: cargo pkgid names no version" >&2; exit 1 ;; esac
 out=target/release
-id=com.zacharyzhang.elyterminal
-name=ELYTerminal-$version-linux-$(uname -m)
+id=io.github.ctexthuang.mioterm
+name=MioTerm-$version-linux-$(uname -m)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/$name"
 cp "$out/elyterminal" "$work/$name/"
 cp assets/icons/elyterminal.svg "$work/$name/$id.svg"
+mkdir -p "$work/$name/licenses/fonts" "$work/$name/licenses/themes"
+cp LICENSE LICENSE-GHOSTTY "$work/$name/licenses/"
+cp assets/fonts/*LICENSE.txt "$work/$name/licenses/fonts/"
+cp assets/themes/LICENSE "$work/$name/licenses/themes/"
+cp README.md "$work/$name/"
 cat > "$work/$name/$id.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=ELYTerminal
+Name=MioTerm
 Exec=elyterminal
 Icon=$id
 Terminal=false

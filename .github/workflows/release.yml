@@ -1,34 +1,74 @@
 name: Release
 
-# Dispatched once the version's draft release holds the Windows and Linux builds.
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  macos:
-    # The owner's login session, whose keychain holds the Developer ID identity.
-    runs-on: [self-hosted, macos-signing]
+  package:
+    name: Package ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            os: macos-15
+            artifact: target/release/MioTerm-*-macos-arm64.dmg
+          - platform: windows-x86_64
+            os: windows-2022
+            artifact: target/release/MioTerm-*-windows-x86_64.zip
+          - platform: linux-x86_64
+            os: ubuntu-24.04
+            artifact: target/release/MioTerm-*-linux-x86_64.tar.gz
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@v2
+      - name: Package macOS with ad-hoc signing, without notarization
+        if: runner.os == 'macOS'
+        run: scripts/mac-app.sh
+      - name: Package Windows without a publisher signature
+        if: runner.os == 'Windows'
+        run: scripts/windows-zip.ps1
+      - name: Package Linux on Debian 12
+        if: runner.os == 'Linux'
+        run: scripts/linux-tar.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MioTerm-${{ matrix.platform }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publish:
+    name: Publish preview
+    needs: package
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      # The runner's PATH lacks the host's rustup.
-      - run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - run: rustup toolchain install --no-self-update
-      - name: Build, sign and notarize the disk image
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: MioTerm-*
+          path: dist
+          merge-multiple: true
+      - name: Create a prerelease with all three packages
         env:
-          SIGN_IDENTITY: "Developer ID Application: Yang Zhang (9PDD8M2SMS)"
-          NOTARY_KEY: ${{ runner.temp }}/notary.p8
-          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          NOTARY_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          trap 'rm -f "$NOTARY_KEY"' EXIT
-          (umask 077 && printf '%s' "$NOTARY_KEY_P8" > "$NOTARY_KEY")
-          scripts/mac-app.sh
-      - name: Put the disk image on the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          version=$(cargo pkgid)
-          scripts/release-asset.sh "target/release/ELYTerminal-${version##*[#@]}.dmg"
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          cd dist
+          sha256sum MioTerm-* > SHA256SUMS.txt
+          cd ..
+          gh release create "v$version" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "MioTerm $version Preview" \
+            --notes-file docs/release-notes.md
