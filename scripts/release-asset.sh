@@ -6,5 +6,5 @@ file=$1
 [ -f "$file" ] || { echo "release-asset: no file $file" >&2; exit 1; }
 version=$(cargo pkgid)
 version=${version##*[#@]}
-gh release upload "v$version" "$file" --clobber -R ELY-Open-Source/ELYTerminal
+gh release upload "v$version" "$file" --clobber -R ctexthuang/MioTerm
 echo "release-asset: $(basename "$file") on release v$version"

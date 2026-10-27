@@ -28,9 +28,10 @@ actions!(elyterminal, [OpenSettings, CloseSettings]);
 const CONTEXT: &str = "Settings";
 
 /// Each category's key, name and icon.
-const SECTIONS: [(&str, &str, IconName); 2] = [
+const SECTIONS: [(&str, &str, IconName); 3] = [
     ("appearance", "Appearance", IconName::Palette),
     ("terminal", "Terminal", IconName::Terminal),
+    ("webdav", "WebDAV Sync", IconName::Cloud),
 ];
 
 /// Cmd-, opens the settings, Cmd-W closes them; off macOS Ctrl-, and Ctrl-Shift-W, as Ghostty's.
@@ -89,6 +90,7 @@ pub struct SettingsWindow {
     shell: Entity<TextInput>,
     /// The shortcut list's search.
     search: Entity<TextInput>,
+    sync: Entity<crate::ssh::sync::page::SyncPage>,
     /// Why the typed shell is not saved.
     refused: Option<SharedString>,
     /// Why the last change did not save.
@@ -117,6 +119,7 @@ impl SettingsWindow {
         });
         let font = cx.new(|cx| TextInput::new(window, cx));
         let search = cx.new(|cx| TextInput::new(window, cx).placeholder("Search shortcuts"));
+        let sync = cx.new(|cx| crate::ssh::sync::page::SyncPage::new(window, cx));
         let typed = cx.subscribe(&shell, |this, input, event: &InputEvent, cx| {
             if let InputEvent::Changed = event {
                 let shell = input.read(cx).text().to_string();
@@ -131,6 +134,7 @@ impl SettingsWindow {
             section: SECTIONS[0].0.into(),
             shell,
             search,
+            sync,
             refused: None,
             failed: None,
             drafts: 0,
@@ -296,6 +300,7 @@ impl Render for SettingsWindow {
                 self.appearance(window, cx).into_any_element()
             }
             "terminal" => self.terminal(cx).into_any_element(),
+            "webdav" => self.sync.clone().into_any_element(),
             other => unreachable!("settings: no section {other}"),
         };
         let page = div()

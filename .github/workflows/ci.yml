@@ -44,7 +44,7 @@ jobs:
       - run: |
           apt-get update && apt-get install -y --no-install-recommends pkg-config libwayland-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libfontconfig-dev \
-            libfreetype-dev zsh fish xvfb
+            libfreetype-dev libdbus-1-dev zsh fish xvfb
           useradd --create-home ci
           chmod o+x "$HOME"
           chown -R ci "$GITHUB_WORKSPACE" "$HOME/.cargo" "$HOME/.rustup"

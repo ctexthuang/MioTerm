@@ -43,6 +43,7 @@ pub const BLINK: Duration = Duration::from_millis(600);
 pub enum TerminalEvent {
     Title(String),
     Folder(PathBuf),
+    RemoteFolder(PathBuf),
     Bell,
     /// The state its row shows changed, to this one.
     Shows(Option<State>),
@@ -262,6 +263,7 @@ impl TerminalView {
                     self.reports += 1;
                     cx.emit(TerminalEvent::Folder(folder));
                 }
+                PtyEvent::RemoteFolder(folder) => cx.emit(TerminalEvent::RemoteFolder(folder)),
                 PtyEvent::Term(event) => self.term_event(event, cx),
                 PtyEvent::Mouse(mode) => self.mouse = mode,
                 #[cfg(windows)]

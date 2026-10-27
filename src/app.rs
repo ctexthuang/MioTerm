@@ -45,6 +45,12 @@ pub fn start(cx: &mut App) -> anyhow::Result<()> {
         );
     }
     SettingsStore::init(cx)?;
+    SettingsStore::update(cx, |settings| {
+        settings.show_sessions = false;
+        settings.show_panel = false;
+    })?;
+    log::info!("app: side panels start collapsed");
+    crate::ssh::HostStore::init(cx)?;
     updates::start(cx);
     ShellIntegration::init(cx)?;
     input::bind_keys(cx);

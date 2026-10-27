@@ -51,6 +51,9 @@ fn run(script: &str, size: (usize, usize)) -> Ran {
         while let Some(event) = events.next().await {
             match event {
                 PtyEvent::Folder(folder) => folders.push(folder),
+                PtyEvent::RemoteFolder(folder) => {
+                    said.push(format!("remote folder {}", folder.display()))
+                }
                 PtyEvent::Mark(mark) => marks.push(mark),
                 PtyEvent::Status(status) => statuses.push(Some(status)),
                 PtyEvent::Reset => {

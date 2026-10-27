@@ -6,7 +6,7 @@ docker build -q -t elyterminal-linux - >/dev/null <<'EOF'
 FROM rust:1.95
 RUN apt-get update \
  && apt-get install -y --no-install-recommends pkg-config libwayland-dev libxkbcommon-dev \
-    libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev zsh fish xvfb \
+    libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev libdbus-1-dev zsh fish xvfb \
  && rm -rf /var/lib/apt/lists/* \
  && rustup component add clippy rustfmt
 # Root ignores the file modes the tests check, as in CI.

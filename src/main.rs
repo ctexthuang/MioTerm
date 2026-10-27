@@ -34,6 +34,9 @@ fn run(cx: &mut App) -> anyhow::Result<()> {
 }
 
 fn main() {
+    if let Some(code) = elyterminal::ssh::auth::askpass::run() {
+        std::process::exit(code);
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("elyterminal=info"))
         .init();
     application().with_assets(Assets).run(|cx: &mut App| {

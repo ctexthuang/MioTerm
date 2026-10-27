@@ -1,8 +1,7 @@
 use std::{
     ffi::OsStr,
-    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::Output,
 };
 
 use anyhow::{Context as _, anyhow, bail, ensure};
@@ -11,10 +10,16 @@ use ely_gpui_component::{
     lists::GitStatus,
 };
 
+mod command;
 mod diff;
 pub mod panel;
 
-pub use diff::diff;
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Backend {
+    #[default]
+    Local,
+    Remote(crate::ssh::remote::Remote),
+}
 
 /// Git's arguments on one line, for messages.
 fn line<A: AsRef<OsStr>>(args: &[A]) -> String {
@@ -28,40 +33,6 @@ fn line<A: AsRef<OsStr>>(args: &[A]) -> String {
 /// Keeps Windows from opening a console window for git and curl.
 #[cfg(windows)]
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-/// Runs git in `folder`: English messages, literal paths, no lock the user's own git could meet; `input` feeds stdin.
-fn git<A: AsRef<OsStr>>(folder: &Path, args: &[A], input: &[u8]) -> anyhow::Result<Output> {
-    let named = || format!("git: `git {}` in {}", line(args), folder.display());
-    let mut command = Command::new("git");
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
-    let mut child = command
-        .arg("-C")
-        .arg(folder)
-        .args(["--no-optional-locks", "--literal-pathspecs"])
-        .args(args)
-        .env("LC_ALL", "C")
-        .stdin(if input.is_empty() {
-            Stdio::null()
-        } else {
-            Stdio::piped()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("{} did not start", named()))?;
-    let wrote = child
-        .stdin
-        .take()
-        .map_or(Ok(()), |mut stdin| stdin.write_all(input));
-    let output = child
-        .wait_with_output()
-        .with_context(|| format!("{} did not end", named()))?;
-    if output.status.success() {
-        wrote.with_context(|| format!("{} took no input", named()))?;
-    }
-    Ok(output)
-}
 
 /// What git said about a failure: its errors, else its output, else its exit status.
 fn said(output: &Output) -> String {
@@ -81,17 +52,23 @@ fn warnings<A: AsRef<OsStr>>(folder: &Path, args: &[A], output: &Output) {
     }
 }
 
-/// Runs git and gives what it printed; a failure is an error carrying what git said.
-fn run<A: AsRef<OsStr>>(folder: &Path, args: &[A], input: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let output = git(folder, args, input)?;
-    let (command, place) = (line(args), folder.display());
-    ensure!(
-        output.status.success(),
-        "git: `git {command}` failed in {place}: {}",
-        said(&output)
-    );
-    warnings(folder, args, &output);
-    Ok(output.stdout)
+impl Backend {
+    fn run<A: AsRef<OsStr>>(
+        &self,
+        folder: &Path,
+        args: &[A],
+        input: &[u8],
+    ) -> anyhow::Result<Vec<u8>> {
+        let output = self.git(folder, args, input)?;
+        let (command, place) = (line(args), folder.display());
+        ensure!(
+            output.status.success(),
+            "git: `git {command}` failed in {place}: {}",
+            said(&output)
+        );
+        warnings(folder, args, &output);
+        Ok(output.stdout)
+    }
 }
 
 /// A path from git's bytes: as they are on Unix; elsewhere UTF-8, as git writes them.
@@ -199,62 +176,81 @@ fn mark(record: &Record, x: u8, y: u8) -> anyhow::Result<GitStatus> {
 }
 
 /// Each change at or under `folder`, by its full path; none outside a work tree.
-pub fn changes(folder: &Path) -> anyhow::Result<Option<Vec<(PathBuf, GitStatus)>>> {
-    let place = ["rev-parse", "--is-inside-work-tree", "--show-prefix"];
-    let place = git(folder, &place, &[])?;
-    if !place.status.success() {
-        let error = said(&place);
-        if error.contains("not a git repository") {
-            return Ok(None);
-        }
-        bail!("git: rev-parse in {} failed: {error}", folder.display());
-    }
-    // The prefix may hold newlines of its own.
-    let answer = place.stdout.strip_suffix(b"\n").and_then(|out| {
-        let at = out.iter().position(|&byte| byte == b'\n')?;
-        Some((&out[..at], &out[at + 1..]))
-    });
-    let prefix = match answer {
-        Some((b"true", prefix)) => prefix,
-        Some((b"false", _)) => return Ok(None),
-        _ => {
-            let printed = String::from_utf8_lossy(&place.stdout);
-            bail!("git: rev-parse in {} printed {printed:?}", folder.display())
-        }
-    };
-    let status = ["status", "--porcelain=v2", "-z", "--", "."];
-    let (_, records) = parse(&run(folder, &status, &[])?)?;
-    records
-        .into_iter()
-        .map(|record| {
-            let status = mark(&record, record.x, record.y)?;
-            let Some(rest) = record.path.strip_prefix(prefix) else {
-                let path = String::from_utf8_lossy(&record.path);
-                let prefix = String::from_utf8_lossy(prefix);
-                bail!("git: {path} lies outside {prefix}");
-            };
-            let mut path = folder.to_path_buf();
-            for part in rest.split(|&byte| byte == b'/') {
-                if !part.is_empty() {
-                    path.push(path_of(part)?);
-                }
+impl Backend {
+    pub fn changes(&self, folder: &Path) -> anyhow::Result<Option<Vec<(PathBuf, GitStatus)>>> {
+        let place = ["rev-parse", "--is-inside-work-tree", "--show-prefix"];
+        let place = self.git(folder, &place, &[])?;
+        if !place.status.success() {
+            let error = said(&place);
+            if error.contains("not a git repository") {
+                return Ok(None);
             }
-            Ok((path, status))
-        })
-        .collect::<anyhow::Result<_>>()
-        .map(Some)
+            bail!("git: rev-parse in {} failed: {error}", folder.display());
+        }
+        // The prefix may hold newlines of its own.
+        let answer = place.stdout.strip_suffix(b"\n").and_then(|out| {
+            let at = out.iter().position(|&byte| byte == b'\n')?;
+            Some((&out[..at], &out[at + 1..]))
+        });
+        let prefix = match answer {
+            Some((b"true", prefix)) => prefix,
+            Some((b"false", _)) => return Ok(None),
+            _ => {
+                let printed = String::from_utf8_lossy(&place.stdout);
+                bail!("git: rev-parse in {} printed {printed:?}", folder.display())
+            }
+        };
+        let status = ["status", "--porcelain=v2", "-z", "--", "."];
+        let (_, records) = parse(&self.run(folder, &status, &[])?)?;
+        records
+            .into_iter()
+            .map(|record| {
+                let status = mark(&record, record.x, record.y)?;
+                let Some(rest) = record.path.strip_prefix(prefix) else {
+                    let path = String::from_utf8_lossy(&record.path);
+                    let prefix = String::from_utf8_lossy(prefix);
+                    bail!("git: {path} lies outside {prefix}");
+                };
+                if matches!(self, Self::Remote(_)) {
+                    let mut path = folder.as_os_str().as_encoded_bytes().to_vec();
+                    if !path.ends_with(b"/") {
+                        path.push(b'/');
+                    }
+                    path.extend_from_slice(rest);
+                    return Ok((path_of(&path)?, status));
+                }
+                let mut path = folder.to_path_buf();
+                for part in rest.split(|&byte| byte == b'/') {
+                    if !part.is_empty() {
+                        path.push(path_of(part)?);
+                    }
+                }
+                Ok((path, status))
+            })
+            .collect::<anyhow::Result<_>>()
+            .map(Some)
+    }
 }
 
 /// A changed file, by its path from the work tree's top; a staged rename keeps its old path.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Change {
     pub path: PathBuf,
     pub from: Option<PathBuf>,
     pub status: GitStatus,
 }
 
+impl PartialEq for Change {
+    fn eq(&self, other: &Self) -> bool {
+        self.path.as_os_str() == other.path.as_os_str()
+            && self.from.as_deref().map(Path::as_os_str)
+                == other.from.as_deref().map(Path::as_os_str)
+            && self.status == other.status
+    }
+}
+
 /// A work tree as the Git panel shows it.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Repo {
     /// The work tree's top folder.
     pub top: PathBuf,
@@ -268,60 +264,76 @@ pub struct Repo {
     pub untracked: Vec<Change>,
 }
 
-/// The work tree holding `folder`, read whole; none outside one.
-pub fn repo(folder: &Path) -> anyhow::Result<Option<Repo>> {
-    let answer = git(folder, &["rev-parse", "--show-toplevel"], &[])?;
-    if !answer.status.success() {
-        let error = said(&answer);
-        if error.contains("not a git repository") || error.contains("must be run in a work tree") {
-            return Ok(None);
-        }
-        bail!("git: rev-parse in {} failed: {error}", folder.display());
+impl PartialEq for Repo {
+    fn eq(&self, other: &Self) -> bool {
+        self.top.as_os_str().as_encoded_bytes() == other.top.as_os_str().as_encoded_bytes()
+            && self.branch == other.branch
+            && self.commit == other.commit
+            && self.conflicted == other.conflicted
+            && self.staged == other.staged
+            && self.unstaged == other.unstaged
+            && self.untracked == other.untracked
     }
-    let top = answer.stdout.strip_suffix(b"\n").with_context(|| {
-        let printed = String::from_utf8_lossy(&answer.stdout);
-        format!("git: rev-parse in {} printed {printed:?}", folder.display())
-    })?;
-    let top = path_of(top)?;
-    let status = ["status", "--porcelain=v2", "--branch", "-z"];
-    let (head, records) = parse(&run(&top, &status, &[])?)?;
-    let mut repo = Repo {
-        top,
-        branch: head.branch,
-        commit: head.commit,
-        conflicted: Vec::new(),
-        staged: Vec::new(),
-        unstaged: Vec::new(),
-        untracked: Vec::new(),
-    };
-    for record in records {
-        let path = path_of(&record.path)?;
-        let change = |status, from| Change {
-            path: path.clone(),
-            from,
-            status,
+}
+
+/// The work tree holding `folder`, read whole; none outside one.
+impl Backend {
+    pub fn repo(&self, folder: &Path) -> anyhow::Result<Option<Repo>> {
+        let answer = self.git(folder, &["rev-parse", "--show-toplevel"], &[])?;
+        if !answer.status.success() {
+            let error = said(&answer);
+            if error.contains("not a git repository")
+                || error.contains("must be run in a work tree")
+            {
+                return Ok(None);
+            }
+            bail!("git: rev-parse in {} failed: {error}", folder.display());
+        }
+        let top = answer.stdout.strip_suffix(b"\n").with_context(|| {
+            let printed = String::from_utf8_lossy(&answer.stdout);
+            format!("git: rev-parse in {} printed {printed:?}", folder.display())
+        })?;
+        let top = path_of(top)?;
+        let status = ["status", "--porcelain=v2", "--branch", "-z"];
+        let (head, records) = parse(&self.run(&top, &status, &[])?)?;
+        let mut repo = Repo {
+            top,
+            branch: head.branch,
+            commit: head.commit,
+            conflicted: Vec::new(),
+            staged: Vec::new(),
+            unstaged: Vec::new(),
+            untracked: Vec::new(),
         };
-        match mark(&record, record.x, record.y)? {
-            GitStatus::Untracked => repo.untracked.push(change(GitStatus::Untracked, None)),
-            GitStatus::Conflicted => repo.conflicted.push(change(GitStatus::Conflicted, None)),
-            _ => {
-                if record.x != b'.' {
-                    // A copy's source is no part of it.
-                    let from = match (record.x, &record.from) {
-                        (b'R', Some(from)) => Some(path_of(from)?),
-                        _ => None,
-                    };
-                    repo.staged
-                        .push(change(mark(&record, record.x, b'.')?, from));
-                }
-                if record.y != b'.' {
-                    repo.unstaged
-                        .push(change(mark(&record, b'.', record.y)?, None));
+        for record in records {
+            let path = path_of(&record.path)?;
+            let change = |status, from| Change {
+                path: path.clone(),
+                from,
+                status,
+            };
+            match mark(&record, record.x, record.y)? {
+                GitStatus::Untracked => repo.untracked.push(change(GitStatus::Untracked, None)),
+                GitStatus::Conflicted => repo.conflicted.push(change(GitStatus::Conflicted, None)),
+                _ => {
+                    if record.x != b'.' {
+                        // A copy's source is no part of it.
+                        let from = match (record.x, &record.from) {
+                            (b'R', Some(from)) => Some(path_of(from)?),
+                            _ => None,
+                        };
+                        repo.staged
+                            .push(change(mark(&record, record.x, b'.')?, from));
+                    }
+                    if record.y != b'.' {
+                        repo.unstaged
+                            .push(change(mark(&record, b'.', record.y)?, None));
+                    }
                 }
             }
         }
+        Ok(Some(repo))
     }
-    Ok(Some(repo))
 }
 
 /// Paths for git's `--pathspec-from-file`: each change's and a rename's old one, NUL-ended, as git's bytes.
@@ -352,102 +364,110 @@ fn names(changes: &[Change]) -> String {
 }
 
 /// Stages `changes`: new, changed and gone files alike.
-pub fn stage(top: &Path, changes: &[Change]) -> anyhow::Result<()> {
-    let args = ["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"];
-    run(top, &args, &pathspecs(changes)?)?;
-    log::info!("git: staged {} in {}", names(changes), top.display());
-    Ok(())
-}
-
-/// Unstages `changes`, before the first commit too.
-pub fn unstage(top: &Path, changes: &[Change]) -> anyhow::Result<()> {
-    let args = [
-        "reset",
-        "-q",
-        "--pathspec-from-file=-",
-        "--pathspec-file-nul",
-    ];
-    run(top, &args, &pathspecs(changes)?)?;
-    log::info!("git: unstaged {} in {}", names(changes), top.display());
-    Ok(())
-}
-
-/// Commits what is staged with `message`.
-pub fn commit(top: &Path, message: &str, amend: bool) -> anyhow::Result<()> {
-    let args: &[&str] = match amend {
-        true => &["commit", "-q", "--amend", "-F", "-"],
-        false => &["commit", "-q", "-F", "-"],
-    };
-    run(top, args, message.as_bytes())?;
-    let amended = if amend { ", amending HEAD" } else { "" };
-    log::info!("git: committed in {}{amended}", top.display());
-    Ok(())
-}
-
-/// Discards `change` from the work tree: an edit goes back to the index; a new file, untracked or only intended to be added, goes.
-pub fn discard(top: &Path, change: &Change, section: ChangeSection) -> anyhow::Result<()> {
-    let shown = change.path.display();
-    let one = || pathspecs(std::slice::from_ref(change));
-    match (section, change.status) {
-        (ChangeSection::Untracked, _) => {
-            let flags = ["clean", "-f", "-d", "--"].map(OsStr::new);
-            let args: Vec<&OsStr> = flags.into_iter().chain([change.path.as_os_str()]).collect();
-            // Git passes over a repository of its own without a word.
-            let removed = run(top, &args, &[])?;
-            ensure!(!removed.is_empty(), "git: clean removed nothing at {shown}");
-        }
-        (ChangeSection::Unstaged, GitStatus::Added | GitStatus::Renamed) => {
-            let args = [
-                "rm",
-                "-f",
-                "-q",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-            ];
-            run(top, &args, &one()?)?;
-        }
-        (ChangeSection::Unstaged, _) => {
-            let args = [
-                "restore",
-                "--worktree",
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-            ];
-            run(top, &args, &one()?)?;
-        }
-        _ => bail!("git: {shown} has nothing to discard in {section:?}"),
+impl Backend {
+    pub fn stage(&self, top: &Path, changes: &[Change]) -> anyhow::Result<()> {
+        let args = ["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"];
+        self.run(top, &args, &pathspecs(changes)?)?;
+        log::info!("git: staged {} in {}", names(changes), top.display());
+        Ok(())
     }
-    log::info!("git: discarded {shown} in {}", top.display());
-    Ok(())
-}
 
-/// The newest `count` commits from HEAD, which must have one.
-pub fn log(top: &Path, count: usize) -> anyhow::Result<Vec<Commit>> {
-    let count = format!("-n{count}");
-    let format = "--format=%H%x00%P%x00%s%x00%an%x00%ar%x00%D";
-    let args = ["log", &count, "-z", "--no-show-signature", format];
-    let out = run(top, &args, &[])?;
-    let out = String::from_utf8_lossy(&out);
-    let fields: Vec<&str> = out.split_terminator('\0').collect();
-    ensure!(
-        fields.len().is_multiple_of(6),
-        "git: log in {} printed {} fields, not six for each commit",
-        top.display(),
-        fields.len()
-    );
-    let listed = |text: &str, by: &str| -> Vec<_> {
-        let parts = text.split(by).filter(|part| !part.is_empty());
-        parts.map(|part| part.to_string().into()).collect()
-    };
-    let commits = fields.chunks(6).map(|commit| Commit {
-        id: commit[0].to_string().into(),
-        parents: listed(commit[1], " "),
-        subject: commit[2].to_string().into(),
-        author: commit[3].to_string().into(),
-        when: commit[4].to_string().into(),
-        refs: listed(commit[5], ", "),
-    });
-    Ok(commits.collect())
+    /// Unstages `changes`, before the first commit too.
+    pub fn unstage(&self, top: &Path, changes: &[Change]) -> anyhow::Result<()> {
+        let args = [
+            "reset",
+            "-q",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ];
+        self.run(top, &args, &pathspecs(changes)?)?;
+        log::info!("git: unstaged {} in {}", names(changes), top.display());
+        Ok(())
+    }
+
+    /// Commits what is staged with `message`.
+    pub fn commit(&self, top: &Path, message: &str, amend: bool) -> anyhow::Result<()> {
+        let args: &[&str] = match amend {
+            true => &["commit", "-q", "--amend", "-F", "-"],
+            false => &["commit", "-q", "-F", "-"],
+        };
+        self.run(top, args, message.as_bytes())?;
+        let amended = if amend { ", amending HEAD" } else { "" };
+        log::info!("git: committed in {}{amended}", top.display());
+        Ok(())
+    }
+
+    /// Discards `change` from the work tree: an edit goes back to the index; a new file, untracked or only intended to be added, goes.
+    pub fn discard(
+        &self,
+        top: &Path,
+        change: &Change,
+        section: ChangeSection,
+    ) -> anyhow::Result<()> {
+        let shown = change.path.display();
+        let one = || pathspecs(std::slice::from_ref(change));
+        match (section, change.status) {
+            (ChangeSection::Untracked, _) => {
+                let flags = ["clean", "-f", "-d", "--"].map(OsStr::new);
+                let args: Vec<&OsStr> =
+                    flags.into_iter().chain([change.path.as_os_str()]).collect();
+                // Git passes over a repository of its own without a word.
+                let removed = self.run(top, &args, &[])?;
+                ensure!(!removed.is_empty(), "git: clean removed nothing at {shown}");
+            }
+            (ChangeSection::Unstaged, GitStatus::Added | GitStatus::Renamed) => {
+                let args = [
+                    "rm",
+                    "-f",
+                    "-q",
+                    "--pathspec-from-file=-",
+                    "--pathspec-file-nul",
+                ];
+                self.run(top, &args, &one()?)?;
+            }
+            (ChangeSection::Unstaged, _) => {
+                let args = [
+                    "restore",
+                    "--worktree",
+                    "--pathspec-from-file=-",
+                    "--pathspec-file-nul",
+                ];
+                self.run(top, &args, &one()?)?;
+            }
+            _ => bail!("git: {shown} has nothing to discard in {section:?}"),
+        }
+        log::info!("git: discarded {shown} in {}", top.display());
+        Ok(())
+    }
+
+    /// The newest `count` commits from HEAD, which must have one.
+    pub fn log(&self, top: &Path, count: usize) -> anyhow::Result<Vec<Commit>> {
+        let count = format!("-n{count}");
+        let format = "--format=%H%x00%P%x00%s%x00%an%x00%ar%x00%D";
+        let args = ["log", &count, "-z", "--no-show-signature", format];
+        let out = self.run(top, &args, &[])?;
+        let out = String::from_utf8_lossy(&out);
+        let fields: Vec<&str> = out.split_terminator('\0').collect();
+        ensure!(
+            fields.len().is_multiple_of(6),
+            "git: log in {} printed {} fields, not six for each commit",
+            top.display(),
+            fields.len()
+        );
+        let listed = |text: &str, by: &str| -> Vec<_> {
+            let parts = text.split(by).filter(|part| !part.is_empty());
+            parts.map(|part| part.to_string().into()).collect()
+        };
+        let commits = fields.chunks(6).map(|commit| Commit {
+            id: commit[0].to_string().into(),
+            parents: listed(commit[1], " "),
+            subject: commit[2].to_string().into(),
+            author: commit[3].to_string().into(),
+            when: commit[4].to_string().into(),
+            refs: listed(commit[5], ", "),
+        });
+        Ok(commits.collect())
+    }
 }
 
 #[cfg(test)]

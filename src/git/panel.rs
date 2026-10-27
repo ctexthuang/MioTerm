@@ -10,7 +10,7 @@ use ely_gpui_component::{
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task, Window};
 
 use self::view::{is_folder, shown};
-use super::{Change, Repo};
+use super::{Backend, Change, Repo};
 
 mod view;
 
@@ -49,6 +49,8 @@ fn listed(repo: &Repo, section: ChangeSection) -> &[Change] {
 
 /// The Git panel: the shown folder's repository, its changes, a commit, recent commits and diffs.
 pub struct GitPanel {
+    backend: Backend,
+    enabled: bool,
     folder: PathBuf,
     state: State,
     /// Where `state` was read: an action waits until it is `folder`.
@@ -70,6 +72,21 @@ pub struct GitPanel {
 impl EventEmitter<Acted> for GitPanel {}
 
 impl GitPanel {
+    pub fn unavailable(&mut self, backend: Backend, message: &str, cx: &mut Context<Self>) {
+        if self.backend != backend {
+            self.folder = PathBuf::from(".");
+        }
+        self.backend = backend;
+        self.enabled = false;
+        self.error = None;
+        self.state = State::Failed(message.to_string().into());
+        self.reading = Task::ready(());
+        self.opening = Task::ready(());
+        self.diff = None;
+        self.discarding = None;
+        cx.notify();
+    }
+
     pub fn new(folder: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let subject = cx.new(|cx| TextInput::new(window, cx).placeholder("Summary"));
         let body = cx.new(|cx| {
@@ -78,6 +95,8 @@ impl GitPanel {
                 .placeholder("Description")
         });
         Self {
+            backend: Backend::Local,
+            enabled: true,
             read: folder.clone(),
             folder,
             state: State::Reading,
@@ -96,15 +115,21 @@ impl GitPanel {
 
     /// Shows `folder`'s repository, read afresh; a new folder drops what the old one had open.
     pub fn show(&mut self, folder: &Path, cx: &mut Context<Self>) {
-        if folder != self.folder {
+        self.show_on(Backend::Local, folder, cx);
+    }
+
+    pub fn show_on(&mut self, backend: Backend, folder: &Path, cx: &mut Context<Self>) {
+        self.enabled = true;
+        if !backend.same_path(folder, &self.folder) || backend != self.backend {
             log::info!("git panel: shows {}", folder.display());
             // Inside the shown work tree the view stays while it reads, so a cd does not blank it.
-            let inside =
-                matches!(&self.state, State::Read(repo, _) if folder.starts_with(&repo.top));
+            let inside = backend == self.backend
+                && matches!(&self.state, State::Read(repo, _) if backend.contains(folder, &repo.top));
             if !inside {
                 self.state = State::Reading;
             }
             self.folder = folder.to_path_buf();
+            self.backend = backend;
             (self.error, self.diff, self.discarding) = (None, None, None);
             self.opening = Task::ready(());
             cx.notify();
@@ -115,7 +140,7 @@ impl GitPanel {
     /// The repository shown, once it was read in the shown folder.
     fn current(&self) -> Option<&Repo> {
         match &self.state {
-            State::Read(repo, _) if self.read == self.folder => Some(repo),
+            State::Read(repo, _) if self.backend.same_path(&self.read, &self.folder) => Some(repo),
             _ => None,
         }
     }
@@ -127,14 +152,18 @@ impl GitPanel {
 
     /// Reads the repository and its recent commits, off the main thread.
     fn read(&mut self, cx: &mut Context<Self>) {
+        if !self.enabled {
+            return;
+        }
         let folder = self.folder.clone();
+        let backend = self.backend.clone();
         let read = cx.background_spawn(async move {
-            let Some(repo) = super::repo(&folder)? else {
+            let Some(repo) = backend.repo(&folder)? else {
                 return Ok(None);
             };
             // Git refuses a log before the first commit.
             let commits = match repo.commit {
-                Some(_) => super::log(&repo.top, RECENT)?,
+                Some(_) => backend.log(&repo.top, RECENT)?,
                 None => Vec::new(),
             };
             anyhow::Ok(Some((repo, commits)))
@@ -182,16 +211,26 @@ impl GitPanel {
         &mut self,
         what: &'static str,
         top: PathBuf,
-        work: impl FnOnce(&Path) -> anyhow::Result<()> + Send + 'static,
+        work: impl FnOnce(&Backend, &Path) -> anyhow::Result<()> + Send + 'static,
         then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
         self.error = None;
+        let backend = self.backend.clone();
+        let source = backend.clone();
         let before = std::mem::replace(&mut self.acting, Task::ready(()));
         self.acting = cx.spawn(async move |panel, cx| {
             before.await;
-            let done = cx.background_spawn(async move { work(&top) }).await;
+            let done = cx
+                .background_spawn(async move { work(&backend, &top) })
+                .await;
             let acted = |panel: &mut Self, cx: &mut Context<Self>| {
+                if panel.backend != source {
+                    if let Err(error) = done {
+                        log::error!("git panel: {what} on previous connection: {error:#}");
+                    }
+                    return;
+                }
                 match done {
                     Ok(()) => then(panel, cx),
                     Err(error) => {
@@ -229,11 +268,11 @@ impl GitPanel {
         log::debug!("git panel: {action:?} {row} in {section:?}");
         match action {
             ChangeAction::Stage => {
-                let work = move |top: &Path| super::stage(top, &[change]);
+                let work = move |backend: &Backend, top: &Path| backend.stage(top, &[change]);
                 self.act("Stage failed", top, work, |_, _| {}, cx)
             }
             ChangeAction::Unstage => {
-                let work = move |top: &Path| super::unstage(top, &[change]);
+                let work = move |backend: &Backend, top: &Path| backend.unstage(top, &[change]);
                 self.act("Unstage failed", top, work, |_, _| {}, cx)
             }
             ChangeAction::Discard => {
@@ -251,12 +290,17 @@ impl GitPanel {
         };
         let top = repo.top.clone();
         if stage {
-            let changes = repo.unstaged.clone();
-            let work = move |top: &Path| super::stage(top, &changes);
+            let changes = repo
+                .unstaged
+                .iter()
+                .chain(&repo.untracked)
+                .cloned()
+                .collect::<Vec<_>>();
+            let work = move |backend: &Backend, top: &Path| backend.stage(top, &changes);
             self.act("Stage failed", top, work, |_, _| {}, cx);
         } else {
             let changes = repo.staged.clone();
-            let work = move |top: &Path| super::unstage(top, &changes);
+            let work = move |backend: &Backend, top: &Path| backend.unstage(top, &changes);
             self.act("Unstage failed", top, work, |_, _| {}, cx);
         }
     }
@@ -267,7 +311,7 @@ impl GitPanel {
         };
         let top = repo.top.clone();
         log::info!("git panel: discarding {} confirmed", change.path.display());
-        let work = move |top: &Path| super::discard(top, &change, section);
+        let work = move |backend: &Backend, top: &Path| backend.discard(top, &change, section);
         self.act("Discard failed", top, work, |_, _| {}, cx);
     }
 
@@ -284,11 +328,14 @@ impl GitPanel {
             body => format!("{}\n\n{body}", subject.trim()),
         };
         let amend = self.amend;
-        let work = move |top: &Path| super::commit(top, &message, amend);
+        let work = move |backend: &Backend, top: &Path| backend.commit(top, &message, amend);
         let committed = top.clone();
         // A draft typed, or a box ticked, while it ran stays, as does all while a folder reads or in another repository.
         let then = move |panel: &mut Self, cx: &mut Context<Self>| {
-            if panel.current().is_none_or(|repo| repo.top != committed) {
+            if panel
+                .current()
+                .is_none_or(|repo| !panel.backend.same_path(&repo.top, &committed))
+            {
                 return;
             }
             for (input, text) in [(&panel.subject, subject), (&panel.body, body)] {
@@ -326,7 +373,8 @@ impl GitPanel {
             );
         }
         let asked = change.clone();
-        let read = cx.background_spawn(async move { super::diff(&top, &asked, section) });
+        let backend = self.backend.clone();
+        let read = cx.background_spawn(async move { backend.diff(&top, &asked, section) });
         self.opening = cx.spawn(async move |panel, cx| {
             let read = read.await;
             let opened = |panel: &mut Self, cx: &mut Context<Self>| {

@@ -133,6 +133,12 @@ fn report(
                     *last = Some(folder.clone());
                 }
                 PtyEvent::Folder(folder)
+            } else if let Some(folder) = body
+                .strip_prefix(b"7;")
+                .and_then(|body| folder_at(body, true))
+            {
+                log::debug!("pty {pid}: remote folder {}", folder.display());
+                PtyEvent::RemoteFolder(folder)
             } else if let Some(rest) = body
                 .strip_prefix(b"0;")
                 .or_else(|| body.strip_prefix(b"2;"))
@@ -351,6 +357,10 @@ const PARAMS: usize = 32;
 
 /// The local folder an OSC 7 `file://host/path` names; another host's folder is none.
 pub(crate) fn folder(body: &[u8]) -> Option<PathBuf> {
+    folder_at(body, false)
+}
+
+fn folder_at(body: &[u8], remote: bool) -> Option<PathBuf> {
     let Some(rest) = body.strip_prefix(b"file://") else {
         log::warn!(
             "pty: OSC 7 without file:// ({})",
@@ -361,11 +371,12 @@ pub(crate) fn folder(body: &[u8]) -> Option<PathBuf> {
     let slash = rest.iter().position(|&byte| byte == b'/')?;
     let host = String::from_utf8_lossy(&rest[..slash]);
     let local = gethostname::gethostname();
-    if !(host.is_empty()
-        || host.eq_ignore_ascii_case("localhost")
-        || local
-            .to_str()
-            .is_some_and(|name| host.eq_ignore_ascii_case(name)))
+    if !remote
+        && !(host.is_empty()
+            || host.eq_ignore_ascii_case("localhost")
+            || local
+                .to_str()
+                .is_some_and(|name| host.eq_ignore_ascii_case(name)))
     {
         log::debug!("pty: OSC 7 from host {host}, not this one");
         return None;
@@ -379,7 +390,7 @@ pub(crate) fn folder(body: &[u8]) -> Option<PathBuf> {
     };
     let drive = path.as_bytes().get(1..3).is_some_and(|two| two[1] == b':')
         && path.as_bytes()[1].is_ascii_alphabetic();
-    Some(PathBuf::from(if cfg!(windows) && drive {
+    Some(PathBuf::from(if !remote && cfg!(windows) && drive {
         &path[1..]
     } else {
         &path[..]

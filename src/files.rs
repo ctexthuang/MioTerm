@@ -147,7 +147,7 @@ impl Files {
         }
         self.read(cx);
         let root = self.root.clone();
-        let changes = cx.background_spawn(async move { git::changes(&root) });
+        let changes = cx.background_spawn(async move { git::Backend::Local.changes(&root) });
         self.checking = cx.spawn(async move |files, cx| {
             let changes = changes.await;
             files.update(cx, |files, cx| files.mark(changes, cx)).ok();

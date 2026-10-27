@@ -47,6 +47,7 @@ pub enum PanelTab {
     #[default]
     Git,
     Files,
+    Monitor,
 }
 
 /// Everything the settings window edits. A field the file leaves out takes its default.
@@ -89,6 +90,7 @@ pub struct Settings {
     /// The main window's size, unmaximized, in pixels.
     pub window_width: f32,
     pub window_height: f32,
+    pub webdav: crate::ssh::sync::WebDav,
 }
 
 impl Default for Settings {
@@ -115,13 +117,14 @@ impl Default for Settings {
             ely: true,
             ely_left: 140.0,
             check_updates: true,
-            show_sessions: true,
-            show_panel: true,
+            show_sessions: false,
+            show_panel: false,
             panel: PanelTab::Git,
             sessions_width: 240.0,
             panel_width: 240.0,
             window_width: 1200.0,
             window_height: 760.0,
+            webdav: crate::ssh::sync::WebDav::default(),
         }
     }
 }
@@ -138,6 +141,7 @@ pub const ELY_LEFT: RangeInclusive<f32> = 0.0..=16384.0;
 impl Settings {
     /// Every value inside its range, every theme built in; the error names the field.
     pub fn validate(&self) -> anyhow::Result<()> {
+        self.webdav.validate()?;
         within("font_size", self.font_size, &FONT_SIZE)?;
         within("line_height", self.line_height, &LINE_HEIGHT)?;
         within("background_opacity", self.background_opacity, &OPACITY)?;

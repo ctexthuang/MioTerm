@@ -45,6 +45,37 @@ fn catppuccin_mocha_reads_its_upstream_colors() {
 }
 
 #[test]
+fn mocha_highlights_use_themes_pink_without_changing_status_colors() {
+    let mocha = find("catppuccin-mocha").expect("mocha");
+    let chrome = palette(mocha, 1.0);
+    assert_eq!(chrome.accent, rgb(0xf5c2e7));
+    assert_eq!(chrome.focus, chrome.accent);
+    assert_eq!(chrome.chart[0], chrome.accent);
+    assert_eq!(chrome.chart[1], mocha.ansi[6]);
+    assert_eq!(chrome.fg, mocha.foreground);
+    assert_eq!(chrome.warning, mocha.ansi[3]);
+    assert_eq!(chrome.danger, mocha.ansi[1]);
+}
+
+#[test]
+fn changing_terminal_themes_changes_the_accent_and_chart_colors() {
+    for theme in all().iter().filter(|theme| !theme.ely) {
+        let chrome = palette(theme, 1.0);
+        assert_eq!(chrome.accent, theme.ansi[5], "{}", theme.id);
+        assert_eq!(chrome.chart[0], chrome.accent, "{}", theme.id);
+    }
+    for id in ["ely-dark", "ely-light"] {
+        let theme = find(id).unwrap();
+        let base = if theme.is_dark() {
+            Palette::dark(false)
+        } else {
+            Palette::light(false)
+        };
+        assert_eq!(palette(theme, 1.0).accent, base.accent);
+    }
+}
+
+#[test]
 fn light_and_dark_follow_the_background() {
     let light: Vec<_> = all()
         .iter()

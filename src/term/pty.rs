@@ -19,6 +19,7 @@ use crate::settings::{CursorStyle, Settings};
 pub enum PtyEvent {
     Term(Event),
     Folder(PathBuf),
+    RemoteFolder(PathBuf),
     Mouse(MouseMode),
     Mark(Mark),
     /// A program's status, OSC 7501.

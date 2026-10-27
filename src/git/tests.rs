@@ -1,4 +1,4 @@
-use std::{env, fs};
+use std::{env, fs, process::Command};
 
 use ely_gpui_component::git::{LineKind, Stretch};
 use gpui::SharedString;
@@ -61,7 +61,10 @@ fn change(path: &str, status: GitStatus) -> Change {
 }
 
 fn read(root: &Path) -> Repo {
-    repo(root).expect("status").expect("a work tree")
+    Backend::Local
+        .repo(root)
+        .expect("status")
+        .expect("a work tree")
 }
 
 #[test]
@@ -150,7 +153,10 @@ fn a_work_tree_reports_changes_under_the_folder() {
     prepare(&root, &["add", "added.txt"]);
     write(&root, "notes/sub/todo.txt", "todo");
 
-    let mut all = changes(&root).expect("status").expect("a work tree");
+    let mut all = Backend::Local
+        .changes(&root)
+        .expect("status")
+        .expect("a work tree");
     all.sort_by(|a, b| a.0.cmp(&b.0));
     let expected = [
         ("added.txt", GitStatus::Added),
@@ -162,16 +168,29 @@ fn a_work_tree_reports_changes_under_the_folder() {
     assert_eq!(all, expected);
     let src = root.join("src");
     let main = (src.join("main.rs"), GitStatus::Modified);
-    assert_eq!(changes(&src).expect("status"), Some(vec![main]));
+    assert_eq!(
+        Backend::Local.changes(&src).expect("status"),
+        Some(vec![main])
+    );
     let sub = root.join("notes").join("sub");
     let whole = (sub.clone(), GitStatus::Untracked);
     assert_eq!(
-        changes(&sub).expect("status"),
+        Backend::Local.changes(&sub).expect("status"),
         Some(vec![whole]),
         "a folder inside an untracked one is untracked whole"
     );
-    assert_eq!(changes(&root.join(".git")).expect("rev-parse"), None);
-    assert_eq!(changes(&folder("git-outside")).expect("rev-parse"), None);
+    assert_eq!(
+        Backend::Local
+            .changes(&root.join(".git"))
+            .expect("rev-parse"),
+        None
+    );
+    assert_eq!(
+        Backend::Local
+            .changes(&folder("git-outside"))
+            .expect("rev-parse"),
+        None
+    );
 }
 
 #[cfg(unix)]
@@ -184,7 +203,10 @@ fn a_folder_named_with_a_newline_keeps_its_whole_prefix() {
     write(&root, "line\nbreak/tracked.txt", "second");
     let inner = root.join("line\nbreak");
     let edit = (inner.join("tracked.txt"), GitStatus::Modified);
-    assert_eq!(changes(&inner).expect("status"), Some(vec![edit]));
+    assert_eq!(
+        Backend::Local.changes(&inner).expect("status"),
+        Some(vec![edit])
+    );
 }
 
 #[test]
@@ -236,8 +258,16 @@ fn a_repository_lists_its_branch_and_each_section() {
     prepare(&root, &["commit", "-qm", "second"]);
     prepare(&root, &["checkout", "-q", "--detach"]);
     assert_eq!(read(&root).branch, None, "a detached HEAD has no branch");
-    assert_eq!(repo(&root.join(".git")).expect("rev-parse"), None);
-    assert_eq!(repo(&folder("git-repo-outside")).expect("rev-parse"), None);
+    assert_eq!(
+        Backend::Local.repo(&root.join(".git")).expect("rev-parse"),
+        None
+    );
+    assert_eq!(
+        Backend::Local
+            .repo(&folder("git-repo-outside"))
+            .expect("rev-parse"),
+        None
+    );
 }
 
 #[test]
@@ -246,21 +276,31 @@ fn files_stage_and_unstage_by_their_literal_paths() {
     write(&root, "star[1].txt", "a\n");
     write(&root, "star1.txt", "b\n");
     let star = change("star[1].txt", GitStatus::Untracked);
-    stage(&root, &[star]).expect("a stage before the first commit");
+    Backend::Local
+        .stage(&root, &[star])
+        .expect("a stage before the first commit");
     let state = read(&root);
     assert_eq!(state.commit, None);
     let added = change("star[1].txt", GitStatus::Added);
     assert_eq!(state.staged, [added], "the brackets match nothing else");
     assert_eq!(state.untracked, [change("star1.txt", GitStatus::Untracked)]);
-    unstage(&root, &state.staged).expect("an unstage before the first commit");
+    Backend::Local
+        .unstage(&root, &state.staged)
+        .expect("an unstage before the first commit");
     let state = read(&root);
     assert!(state.staged.is_empty(), "{:?}", state.staged);
     assert_eq!(state.untracked.len(), 2);
 
-    stage(&root, &state.untracked).expect("a stage");
-    commit(&root, "first", false).expect("a commit");
+    Backend::Local
+        .stage(&root, &state.untracked)
+        .expect("a stage");
+    Backend::Local
+        .commit(&root, "first", false)
+        .expect("a commit");
     prepare(&root, &["mv", "star1.txt", "moved.txt"]);
-    unstage(&root, &read(&root).staged).expect("an unstaged rename");
+    Backend::Local
+        .unstage(&root, &read(&root).staged)
+        .expect("an unstaged rename");
     let state = read(&root);
     assert!(
         state.staged.is_empty(),
@@ -269,10 +309,10 @@ fn files_stage_and_unstage_by_their_literal_paths() {
     assert_eq!(state.unstaged, [change("star1.txt", GitStatus::Deleted)]);
     assert_eq!(state.untracked, [change("moved.txt", GitStatus::Untracked)]);
     assert!(
-        stage(&root, &[]).is_err(),
+        Backend::Local.stage(&root, &[]).is_err(),
         "no path would stage the whole tree"
     );
-    assert!(unstage(&root, &[]).is_err());
+    assert!(Backend::Local.unstage(&root, &[]).is_err());
 }
 
 #[cfg(unix)]
@@ -281,7 +321,7 @@ fn a_name_with_a_newline_stages_whole() {
     let root = repository("git-stage-newline");
     write(&root, "line\nfeed.txt", "a\n");
     let new = change("line\nfeed.txt", GitStatus::Untracked);
-    stage(&root, &[new]).expect("a stage");
+    Backend::Local.stage(&root, &[new]).expect("a stage");
     let added = change("line\nfeed.txt", GitStatus::Added);
     assert_eq!(read(&root).staged, [added]);
 }
@@ -290,13 +330,21 @@ fn a_name_with_a_newline_stages_whole() {
 fn a_commit_takes_the_staged_files_and_heads_the_log() {
     let root = repository("git-commit");
     write(&root, "a.txt", "a\n");
-    stage(&root, &[change("a.txt", GitStatus::Untracked)]).expect("a stage");
-    commit(&root, "first subject\n\nIts body.", false).expect("a commit");
+    Backend::Local
+        .stage(&root, &[change("a.txt", GitStatus::Untracked)])
+        .expect("a stage");
+    Backend::Local
+        .commit(&root, "first subject\n\nIts body.", false)
+        .expect("a commit");
     write(&root, "b.txt", "b\n");
-    stage(&root, &[change("b.txt", GitStatus::Untracked)]).expect("a stage");
-    commit(&root, "second", false).expect("a commit");
+    Backend::Local
+        .stage(&root, &[change("b.txt", GitStatus::Untracked)])
+        .expect("a stage");
+    Backend::Local
+        .commit(&root, "second", false)
+        .expect("a commit");
 
-    let commits = log(&root, 10).expect("a log");
+    let commits = Backend::Local.log(&root, 10).expect("a log");
     let [newest, first] = commits.as_slice() else {
         panic!("two commits: {commits:?}");
     };
@@ -309,8 +357,10 @@ fn a_commit_takes_the_staged_files_and_heads_the_log() {
     assert!(newest.when.ends_with("ago"), "{}", newest.when);
     assert_eq!(newest.refs, [SharedString::from("HEAD -> main")]);
     assert!(first.refs.is_empty());
-    assert_eq!(log(&root, 1).expect("a log").len(), 1);
-    let error = commit(&root, "nothing", false).expect_err("nothing is staged");
+    assert_eq!(Backend::Local.log(&root, 1).expect("a log").len(), 1);
+    let error = Backend::Local
+        .commit(&root, "nothing", false)
+        .expect_err("nothing is staged");
     assert!(format!("{error:#}").contains("nothing"), "{error:#}");
 }
 
@@ -330,7 +380,9 @@ fn a_copy_keeps_no_source_to_unstage_or_diff() {
     let source = change("source.txt", GitStatus::Modified);
     let copy = change("copy.txt", GitStatus::Added);
     assert_eq!(read(&root).staged, [copy.clone(), source.clone()]);
-    let stretches = diff(&root, &copy, ChangeSection::Staged).expect("a diff");
+    let stretches = Backend::Local
+        .diff(&root, &copy, ChangeSection::Staged)
+        .expect("a diff");
     let Some([Stretch::Hunk { lines, .. }]) = stretches.as_deref() else {
         panic!("one hunk: {stretches:?}");
     };
@@ -339,7 +391,9 @@ fn a_copy_keeps_no_source_to_unstage_or_diff() {
         added && lines.len() == 50,
         "the copy's lines alone: {lines:?}"
     );
-    unstage(&root, &[copy]).expect("an unstaged copy");
+    Backend::Local
+        .unstage(&root, &[copy])
+        .expect("an unstaged copy");
     assert_eq!(read(&root).staged, [source], "the source stays staged");
 }
 
@@ -349,12 +403,16 @@ fn names_that_show_alike_stay_apart() {
     let root = repository("git-bytes");
     write(&root, "bad\u{FFFD}.txt", "text\n");
     prepare(&root, &["add", "."]);
-    let blob = run(&root, &["hash-object", "-w", "--stdin"], b"text\n").expect("a blob");
+    let blob = Backend::Local
+        .run(&root, &["hash-object", "-w", "--stdin"], b"text\n")
+        .expect("a blob");
     // A name not in UTF-8, which macOS refuses on disk, goes straight into the index.
     let mut entry = b"100644 ".to_vec();
     entry.extend(blob.trim_ascii());
     entry.extend(b"\tbad\xff.txt\0");
-    run(&root, &["update-index", "-z", "--index-info"], &entry).expect("an index entry");
+    Backend::Local
+        .run(&root, &["update-index", "-z", "--index-info"], &entry)
+        .expect("an index entry");
 
     let raw = <OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"bad\xff.txt");
     let staged = read(&root).staged;
@@ -369,28 +427,9 @@ fn names_that_show_alike_stay_apart() {
     );
     let bytes = staged.iter().find(|change| change.path == raw);
     let bytes = bytes.expect("the name in bytes").clone();
-    unstage(&root, &[bytes]).expect("an unstage");
+    Backend::Local.unstage(&root, &[bytes]).expect("an unstage");
     let left = [change("bad\u{FFFD}.txt", GitStatus::Added)];
     assert_eq!(read(&root).staged, left, "the other name stays staged");
-}
-
-#[test]
-fn an_amend_rewrites_the_last_commit() {
-    let root = repository("git-amend");
-    assert!(
-        commit(&root, "nothing yet", true).is_err(),
-        "no commit to amend"
-    );
-    write(&root, "a.txt", "a\n");
-    stage(&root, &[change("a.txt", GitStatus::Untracked)]).expect("a stage");
-    commit(&root, "first", false).expect("a commit");
-    commit(&root, "first, reworded", true).expect("an amend with nothing staged");
-    let commits = log(&root, 10).expect("a log");
-    let subjects: Vec<&str> = commits
-        .iter()
-        .map(|commit| commit.subject.as_ref())
-        .collect();
-    assert_eq!(subjects, ["first, reworded"]);
 }
 
 #[test]
@@ -415,20 +454,26 @@ fn a_discard_restores_edits_and_deletes_new_files() {
 
     let state = read(&root);
     for change in &state.unstaged {
-        discard(&root, change, ChangeSection::Unstaged).expect("a discarded edit");
+        Backend::Local
+            .discard(&root, change, ChangeSection::Unstaged)
+            .expect("a discarded edit");
     }
     let (nested, loose): (Vec<_>, Vec<_>) =
         (state.untracked.iter()).partition(|change| change.path == Path::new("nested/"));
     for change in loose {
-        discard(&root, change, ChangeSection::Untracked).expect("a deleted file");
+        Backend::Local
+            .discard(&root, change, ChangeSection::Untracked)
+            .expect("a deleted file");
     }
-    let error = discard(&root, nested[0], ChangeSection::Untracked).expect_err("git skips it");
+    let error = Backend::Local
+        .discard(&root, nested[0], ChangeSection::Untracked)
+        .expect_err("git skips it");
     assert!(
         format!("{error:#}").contains("removed nothing"),
         "{error:#}"
     );
     let staged = read(&root).staged;
-    let kept = discard(&root, &staged[0], ChangeSection::Staged);
+    let kept = Backend::Local.discard(&root, &staged[0], ChangeSection::Staged);
     assert!(kept.is_err(), "a staged change is not discarded");
 
     let text = |path| fs::read_to_string(root.join(path)).expect("a file");
@@ -444,4 +489,5 @@ fn a_discard_restores_edits_and_deletes_new_files() {
     assert_eq!(state.untracked, [change("nested/", GitStatus::Untracked)]);
 }
 
+mod commits;
 mod diffs;

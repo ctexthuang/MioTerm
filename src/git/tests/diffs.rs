@@ -49,7 +49,9 @@ fn diffs_read_as_ely_stretches() {
     write(&root, "notes/todo.txt", "todo\n");
 
     let a = change("a.txt", GitStatus::Modified);
-    let staged = diff(&root, &a, ChangeSection::Staged).expect("a diff");
+    let staged = Backend::Local
+        .diff(&root, &a, ChangeSection::Staged)
+        .expect("a diff");
     let words = |kind, at, text| lined(kind, at, text, vec![Range { start: 4, end: 7 }]);
     let expected = hunk(
         "@@ -1,3 +1,3 @@",
@@ -61,7 +63,9 @@ fn diffs_read_as_ely_stretches() {
         ],
     );
     assert_eq!(staged, Some(vec![expected]));
-    let unstaged = diff(&root, &a, ChangeSection::Unstaged).expect("a diff");
+    let unstaged = Backend::Local
+        .diff(&root, &a, ChangeSection::Unstaged)
+        .expect("a diff");
     let expected = hunk(
         "@@ -1,3 +1,4 @@",
         vec![
@@ -73,7 +77,9 @@ fn diffs_read_as_ely_stretches() {
     );
     assert_eq!(unstaged, Some(vec![expected]));
     let fresh = change("fresh.txt", GitStatus::Untracked);
-    let untracked = diff(&root, &fresh, ChangeSection::Untracked).expect("a diff");
+    let untracked = Backend::Local
+        .diff(&root, &fresh, ChangeSection::Untracked)
+        .expect("a diff");
     let expected = hunk(
         "@@ -0,0 +1,2 @@",
         vec![
@@ -83,17 +89,25 @@ fn diffs_read_as_ely_stretches() {
     );
     assert_eq!(untracked, Some(vec![expected]));
     let binary = change("bin.dat", GitStatus::Modified);
-    let binary = diff(&root, &binary, ChangeSection::Unstaged).expect("a diff");
+    let binary = Backend::Local
+        .diff(&root, &binary, ChangeSection::Unstaged)
+        .expect("a diff");
     assert_eq!(binary, None, "a binary file has no lines");
     let moved = read(&root)
         .staged
         .into_iter()
         .find(|change| change.from.is_some());
     let moved = moved.expect("a staged rename");
-    let renamed = diff(&root, &moved, ChangeSection::Staged).expect("a diff");
+    let renamed = Backend::Local
+        .diff(&root, &moved, ChangeSection::Staged)
+        .expect("a diff");
     assert_eq!(renamed, Some(Vec::new()), "a pure rename changes no line");
     let notes = change("notes/", GitStatus::Untracked);
-    assert!(diff(&root, &notes, ChangeSection::Untracked).is_err());
+    assert!(
+        Backend::Local
+            .diff(&root, &notes, ChangeSection::Untracked)
+            .is_err()
+    );
 }
 
 /// A repository whose merge of `other`, which made c.txt `theirs`, stops on what `ours` did to it.
@@ -124,7 +138,9 @@ fn a_conflict_diffs_against_head_our_side() {
     let root = conflict("git-conflict", |root| write(root, "c.txt", "ours\n"));
     let state = read(&root);
     assert_eq!(state.conflicted, [change("c.txt", GitStatus::Conflicted)]);
-    let ours = diff(&root, &state.conflicted[0], ChangeSection::Conflicted).expect("a diff");
+    let ours = Backend::Local
+        .diff(&root, &state.conflicted[0], ChangeSection::Conflicted)
+        .expect("a diff");
     let Some([Stretch::Hunk { lines, .. }]) = ours.as_deref() else {
         panic!("one hunk: {ours:?}");
     };
@@ -146,7 +162,9 @@ fn a_conflict_diffs_against_head_our_side() {
     });
     let state = read(&root);
     assert_eq!(state.conflicted, [change("c.txt", GitStatus::Conflicted)]);
-    let theirs = diff(&root, &state.conflicted[0], ChangeSection::Conflicted).expect("a diff");
+    let theirs = Backend::Local
+        .diff(&root, &state.conflicted[0], ChangeSection::Conflicted)
+        .expect("a diff");
     let expected = hunk(
         "@@ -0,0 +1 @@",
         vec![line(Added, (None, Some(1)), "theirs")],
@@ -177,7 +195,9 @@ fn a_diff_runs_no_text_converter() {
             line(Added, (None, Some(1)), "new"),
         ],
     );
-    let unstaged = diff(&root, &a, ChangeSection::Unstaged).expect("a diff");
+    let unstaged = Backend::Local
+        .diff(&root, &a, ChangeSection::Unstaged)
+        .expect("a diff");
     assert_eq!(unstaged, Some(vec![expected]));
 }
 
@@ -188,11 +208,17 @@ fn an_untracked_diff_outlasts_a_warning_not_a_missing_file() {
     prepare(&root, &["config", "core.autocrlf", "true"]);
     write(&root, "fresh.txt", "fresh\n");
     let fresh = change("fresh.txt", GitStatus::Untracked);
-    let untracked = diff(&root, &fresh, ChangeSection::Untracked).expect("a diff git warned of");
+    let untracked = Backend::Local
+        .diff(&root, &fresh, ChangeSection::Untracked)
+        .expect("a diff git warned of");
     let expected = hunk("@@ -0,0 +1 @@", vec![line(Added, (None, Some(1)), "fresh")]);
     assert_eq!(untracked, Some(vec![expected]));
     let gone = change("gone.txt", GitStatus::Untracked);
-    assert!(diff(&root, &gone, ChangeSection::Untracked).is_err());
+    assert!(
+        Backend::Local
+            .diff(&root, &gone, ChangeSection::Untracked)
+            .is_err()
+    );
 }
 
 #[test]

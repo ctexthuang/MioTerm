@@ -26,12 +26,29 @@ impl Workspace {
                 session.title.clone_from(title);
             }
             TerminalEvent::Folder(folder) => {
+                if session.remote.is_some() {
+                    log::debug!(
+                        "ssh: remote session {} folder {}",
+                        index + 1,
+                        folder.display()
+                    );
+                    self.reported_remote_folder(index, folder, cx);
+                    return;
+                }
                 session.folder.clone_from(folder);
                 session.reports = true;
                 if index == self.active {
                     self.files.update(cx, |files, cx| files.show(folder, cx));
                     self.git.update(cx, |git, cx| git.show(folder, cx));
                 }
+            }
+            TerminalEvent::RemoteFolder(folder) => {
+                if session.remote.is_some() {
+                    self.reported_remote_folder(index, folder, cx);
+                } else {
+                    log::debug!("app: foreign folder ignored in local session {}", index + 1);
+                }
+                return;
             }
             TerminalEvent::Bell if index != self.active => {
                 if !session.bell {
@@ -49,7 +66,16 @@ impl Workspace {
             TerminalEvent::Exited(status) => {
                 let pid = session.terminal.read(cx).pid();
                 log::info!("app: session {pid}'s program ended, {status}");
-                self.close(index, window, cx);
+                if session.remote.is_some() {
+                    session.disconnected = true;
+                    if index == self.active {
+                        self.follow_monitor(cx);
+                        self.follow_files(cx);
+                    }
+                    cx.notify();
+                } else {
+                    self.close(index, window, cx);
+                }
                 return;
             }
         }

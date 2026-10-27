@@ -23,6 +23,10 @@ use orb::Look;
 
 /// A program on its own terminal, as the sessions column lists it.
 pub struct Session {
+    pub remote: Option<crate::ssh::Host>,
+    pub remote_folder: Option<crate::ssh::files::RemotePath>,
+    pub control: Option<crate::ssh::control::Control>,
+    pub disconnected: bool,
     pub terminal: Entity<TerminalView>,
     /// The program's title; empty while it names none.
     pub title: String,
@@ -119,7 +123,11 @@ pub fn row(
     let (select, close) = (workspace.clone(), workspace.clone());
     let editing = session.editing.is_some();
     let item = ListItem::new(("session", pid), session.named().to_string())
-        .description(shown(&session.folder, home))
+        .description(match &session.remote {
+            Some(host) if session.disconnected => format!("Disconnected - {}", host.destination()),
+            Some(host) => format!("SSH - {}", host.destination()),
+            None => shown(&session.folder, home),
+        })
         .selected(active)
         .strong(session.bell || session.waiting)
         // A press in the field it renames with stays the field's.

@@ -3,9 +3,11 @@ pub mod blur;
 pub mod files;
 pub mod git;
 pub mod menus;
+pub mod monitor;
 pub mod pet;
 pub mod sessions;
 pub mod settings;
+pub mod ssh;
 pub mod term;
 #[cfg(all(test, unix))]
 mod testlog;

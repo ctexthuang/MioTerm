@@ -165,6 +165,10 @@ fn a_local_uri_gives_its_decoded_folder() {
 #[test]
 fn other_hosts_and_bad_uris_give_none() {
     assert_eq!(folder(b"file://elsewhere.invalid/tmp"), None);
+    assert_eq!(
+        folder_at(b"file://elsewhere.invalid/tmp/a%20b", true),
+        Some(PathBuf::from("/tmp/a b"))
+    );
     assert_eq!(folder(b"http://x/y"), None);
     assert_eq!(folder(b"file:///%FF"), None);
 }

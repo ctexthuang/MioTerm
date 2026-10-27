@@ -18,6 +18,7 @@ pub fn palette(theme: &TerminalTheme, opacity: f32) -> Palette {
         };
     }
     let (bg, fg, ansi) = (theme.background, theme.foreground, theme.ansi);
+    let accent = ansi[5];
     let tint = |share: f32| bg.mix(&fg, share);
     let wash = |color: gpui::Hsla| bg.mix(&color, 0.18);
     Palette {
@@ -33,10 +34,10 @@ pub fn palette(theme: &TerminalTheme, opacity: f32) -> Palette {
         fg_muted: tint(0.8),
         fg_subtle: tint(0.62),
         fg_disabled: tint(0.36),
-        accent: fg,
-        accent_hover: tint(0.85),
+        accent,
+        accent_hover: accent.mix(&fg, 0.15),
         on_accent: bg,
-        focus: ansi[4],
+        focus: accent,
         link: ansi[12],
         selection: theme.selection_background.alpha(0.4),
         success: ansi[2],
@@ -51,7 +52,7 @@ pub fn palette(theme: &TerminalTheme, opacity: f32) -> Palette {
         tooltip_bg: tint(0.2),
         tooltip_fg: fg,
         chart: [
-            ansi[4], ansi[6], ansi[3], ansi[5], ansi[2], ansi[1], ansi[12], ansi[14],
+            accent, ansi[6], ansi[3], ansi[4], ansi[2], ansi[1], ansi[12], ansi[14],
         ],
         ansi,
         syntax: Syntax {

@@ -228,7 +228,10 @@ fn decomposed_names_on_disk_wear_the_composed_marks_git_writes() {
 
     let mut files = Files::new(root.clone());
     files.listings.insert(root.clone(), list(&root));
-    let changes = git::changes(&root).expect("status").expect("a work tree");
+    let changes = git::Backend::Local
+        .changes(&root)
+        .expect("status")
+        .expect("a work tree");
     (files.marks, files.dirty) = marks(&root, changes);
     let node = |name: &str, icon| TreeNode::new(key(&root.join(name)), name).icon(icon);
     let dotted = |node: TreeNode| node.note("•").tone(Tone::Warning);

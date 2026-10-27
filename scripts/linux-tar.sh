@@ -6,7 +6,7 @@ docker build -q -t elyterminal-release - >/dev/null <<'EOF'
 FROM rust:1.95.0-bookworm
 RUN apt-get update \
  && apt-get install -y --no-install-recommends pkg-config libwayland-dev libxkbcommon-dev \
-    libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev \
+    libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev libdbus-1-dev \
  && rm -rf /var/lib/apt/lists/* \
  && rustup component add clippy rustfmt
 EOF

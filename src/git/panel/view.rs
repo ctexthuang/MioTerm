@@ -1,12 +1,13 @@
 use std::path::Path;
 
 use ely_gpui_component::{
+    buttons::{ButtonVariant, IconButton},
     feedback::Alert,
     git::{ChangeSection, Changed, ChangesList, CommitInput, CommitList, DiffViewer},
     lists::GitStatus,
     overlays::{ConfirmDialog, Dialog},
     primitives::{Icon, IconName, Severity},
-    theme::{ActiveTheme, TextSize},
+    theme::{ActiveTheme, ControlSize, TextSize},
     typography::{Caption, Ellipsis},
 };
 use gpui::{
@@ -194,7 +195,34 @@ impl GitPanel {
 
 impl Render for GitPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let root = div().size_full().flex().flex_col().gap_2();
+        let refresh = cx.entity();
+        let label = match &self.backend {
+            crate::git::Backend::Local => self.folder.display().to_string(),
+            crate::git::Backend::Remote(remote) => {
+                format!("{}:{}", remote.host.label(), self.folder.display())
+            }
+        };
+        let root = div().size_full().flex().flex_col().gap_2().child(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(Ellipsis::new(crate::sessions::one_line(&label))),
+                )
+                .child(
+                    IconButton::new("git-refresh", IconName::RefreshCw)
+                        .variant(ButtonVariant::Ghost)
+                        .size(ControlSize::Sm)
+                        .tooltip("Refresh Git")
+                        .disabled(!self.enabled)
+                        .on_click(move |_, _, cx| refresh.update(cx, |panel, cx| panel.read(cx))),
+                ),
+        );
         let (repo, commits) = match &self.state {
             State::Reading => return root,
             State::Outside => return root.child(Caption::new("Not a Git repository.").px_2()),

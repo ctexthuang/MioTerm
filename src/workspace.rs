@@ -1,17 +1,15 @@
 use std::time::Instant;
 
 use ely_gpui_component::{
-    buttons::{ButtonVariant, IconButton, SegmentedControl},
-    lists::List,
+    buttons::{ButtonVariant, IconButton},
     primitives::{FocusScope, IconName},
     shell::{ColumnShell, ResizeBorder, ShellColumn},
     theme::ControlSize,
-    typography::Caption,
 };
 use gpui::{
     Action, App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, KeyBinding, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    StyleRefinement, Styled, Subscription, Task, Window, actions, div, prelude::FluentBuilder,
+    IntoElement, KeyBinding, ParentElement, Render, Styled, Subscription, Task, Window, actions,
+    div, prelude::FluentBuilder,
 };
 
 use crate::{
@@ -19,20 +17,21 @@ use crate::{
     files::Files,
     git::panel::{Acted, GitPanel},
     menus,
+    monitor::MonitorPanel,
     sessions::{self, Session, orb},
-    settings::{PanelTab, Settings, SettingsStore, StartIn, window::OpenSettings},
-    term::{
-        Events, Launch, Pty, TerminalView, config,
-        shell::{ShellIntegration, launch},
-        spawn,
-    },
+    settings::{Settings, SettingsStore, window::OpenSettings},
+    ssh::panel::{Connect, HostPanel},
+    term::{Events, Launch, Pty, TerminalView},
 };
 
+mod connections;
 mod events;
+mod panel;
+mod remote;
 mod rename;
 mod widths;
 
-use widths::{Dragged, Side};
+use widths::Dragged;
 
 actions!(
     elyterminal,
@@ -86,14 +85,20 @@ pub fn bind_keys(cx: &mut App) {
     );
 }
 
-/// The main window's content: sessions, the terminal, and Git or Files, in Ely's columns.
+/// Sessions, the terminal, and the shared right panel in Ely's columns.
 pub struct Workspace {
     focus: FocusHandle,
     sessions: Vec<Session>,
     /// The session shown.
     active: usize,
     files: Entity<Files>,
+    remote_files: Entity<crate::ssh::files::panel::RemoteFiles>,
     git: Entity<GitPanel>,
+    hosts: Entity<HostPanel>,
+    monitor: Entity<MonitorPanel>,
+    sidebar_hosts: bool,
+    ssh_error: Option<String>,
+    _connect: Subscription,
     /// What the window shows of the desktop, and the blur behind it.
     background: Blur,
     /// Column widths a drag shows before the settings hold them.
@@ -102,6 +107,7 @@ pub struct Workspace {
     ticking: Option<Task<()>>,
     _settings: Subscription,
     _acted: Subscription,
+    _remote_folder: Subscription,
 }
 
 impl Workspace {
@@ -114,17 +120,40 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Self {
         let git = cx.new(|cx| GitPanel::new(launch.cwd.clone(), window, cx));
+        let hosts = cx.new(|cx| HostPanel::new(window, cx));
+        let remote_files =
+            cx.new(|cx| crate::ssh::files::panel::RemoteFiles::new(launch.cwd.clone(), window, cx));
+        let remote_folder = cx.subscribe(
+            &remote_files,
+            |this, _, event: &crate::ssh::files::panel::FolderChanged, cx| {
+                this.remote_folder(event, cx);
+            },
+        );
+        let connect = cx.subscribe_in(&hosts, window, |this, _, event: &Connect, window, cx| {
+            this.connect(event.0.clone(), window, cx);
+        });
         // A change the Git panel made shows in Files' marks too.
         let acted = cx.subscribe(&git, |this, _, _: &Acted, cx| {
-            let folder = this.sessions[this.active].folder.clone();
-            this.files.update(cx, |files, cx| files.show(&folder, cx));
+            if this.sessions[this.active].remote.is_some() {
+                this.remote_files
+                    .update(cx, |files, cx| files.refresh_remote(cx));
+            } else {
+                let folder = this.sessions[this.active].folder.clone();
+                this.files.update(cx, |files, cx| files.show(&folder, cx));
+            }
         });
         let mut workspace = Self {
             focus: cx.focus_handle(),
             sessions: Vec::new(),
             active: 0,
             files: cx.new(|_| Files::new(launch.cwd.clone())),
+            remote_files,
             git,
+            hosts,
+            monitor: cx.new(MonitorPanel::new),
+            sidebar_hosts: true,
+            ssh_error: None,
+            _connect: connect,
             background: Blur::new(window, SettingsStore::get(cx)),
             dragged: Dragged::default(),
             ticking: None,
@@ -133,6 +162,7 @@ impl Workspace {
                 cx.notify();
             }),
             _acted: acted,
+            _remote_folder: remote_folder,
         };
         workspace.add(pty, events, launch, window, cx);
         workspace.select(0, window, cx);
@@ -164,6 +194,10 @@ impl Workspace {
             bell: false,
             waiting: false,
             look: None,
+            remote: None,
+            remote_folder: None,
+            control: None,
+            disconnected: false,
             _events: events,
         });
     }
@@ -193,31 +227,6 @@ impl Workspace {
         });
     }
 
-    /// A session of the shell the settings name, in home or the shown session's folder.
-    fn new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(home) = dirs::home_dir() else {
-            log::error!("app: no home folder, so no new session");
-            return;
-        };
-        let settings = SettingsStore::get(cx);
-        let folder = match settings.start_in {
-            StartIn::Home => home,
-            StartIn::Session => self
-                .sessions
-                .get(self.active)
-                .map_or(home, |session| session.folder.clone()),
-        };
-        let started = launch(&settings.shell, folder, &cx.global::<ShellIntegration>().0)
-            .and_then(|launch| Ok((spawn(&launch, (80, 24), (8, 16), config(settings))?, launch)));
-        match started {
-            Ok(((pty, events), launch)) => {
-                self.add(pty, events, launch, window, cx);
-                self.select(self.sessions.len() - 1, window, cx);
-            }
-            Err(error) => log::error!("app: no new session: {error:#}"),
-        }
-    }
-
     /// Shows session `index`, clears its bell and its waiting mark, and gives its terminal the keys.
     pub fn select(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.sessions.len() {
@@ -236,10 +245,9 @@ impl Workspace {
         session.waiting = false;
         session.terminal.update(cx, |view, _| view.set_front(true));
         window.focus(&session.terminal.focus_handle(cx), cx);
-        let folder = session.folder.clone();
-        self.files.update(cx, |files, cx| files.show(&folder, cx));
-        self.git.update(cx, |git, cx| git.show(&folder, cx));
         self.active = index;
+        self.follow_files(cx);
+        self.follow_monitor(cx);
         log::debug!("app: session {} shown", index + 1);
         self.retitle(window);
         cx.notify();
@@ -308,22 +316,6 @@ impl Workspace {
     }
 }
 
-/// Shows Git or Files in the right column, as the settings keep it.
-fn show_tab(value: &SharedString, cx: &mut App) {
-    let panel = match value.as_ref() {
-        "git" => PanelTab::Git,
-        "files" => PanelTab::Files,
-        other => unreachable!("app: no {other} tab"),
-    };
-    if SettingsStore::get(cx).panel == panel {
-        return;
-    }
-    match SettingsStore::update(cx, |settings| settings.panel = panel) {
-        Ok(()) => log::info!("app: the right column shows {panel:?}"),
-        Err(error) => log::error!("app: the right column stays: {error:#}"),
-    }
-}
-
 /// A header button that hides or shows a column, saved.
 fn column_toggle(
     workspace: &Entity<Workspace>,
@@ -352,13 +344,13 @@ impl Render for Workspace {
         let left = column_toggle(
             &workspace,
             ("toggle-sessions", IconName::PanelLeft),
-            tip(settings.show_sessions, "sessions"),
+            tip(settings.show_sessions, "left panel"),
             |settings| settings.show_sessions = !settings.show_sessions,
         );
         let right = column_toggle(
             &workspace,
             ("toggle-panel", IconName::PanelRight),
-            tip(settings.show_panel, "Git and Files"),
+            tip(settings.show_panel, "right panel"),
             |settings| settings.show_panel = !settings.show_panel,
         );
         // No menu bar off macOS: a gear opens Settings.
@@ -373,6 +365,7 @@ impl Render for Workspace {
             .flex()
             .items_center()
             .gap_2()
+            .children(self.reconnect_button(cx))
             .children(gear)
             .child(right);
         let mut shell = ColumnShell::new("workspace").glass();
@@ -384,70 +377,12 @@ impl Render for Workspace {
             .title(self.title().to_string())
             .children(shown);
         if settings.show_sessions {
-            let home = dirs::home_dir();
-            let rows = self.sessions.iter().enumerate().map(|(index, session)| {
-                let active = index == self.active;
-                sessions::row(&workspace, index, session, active, home.as_deref(), now, cx)
-            });
-            let list = List::new().children(rows);
-            let new = IconButton::new("new-session", IconName::Plus)
-                .variant(ButtonVariant::Ghost)
-                .size(ControlSize::Sm)
-                .tooltip("New session")
-                .on_click(move |_, window, cx| {
-                    workspace.update(cx, |this, cx| this.new_session(window, cx))
-                });
-            shell = shell.column(
-                self.side_column(Side::Sessions, cx)
-                    .leading(left)
-                    .action(new)
-                    .child(
-                        div()
-                            .id("sessions")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .p_2()
-                            .child(list),
-                    ),
-            );
+            shell = shell.column(self.connection_sidebar(left, now, cx));
         } else {
             terminal = terminal.leading(left);
         }
         if settings.show_panel {
-            let tab = settings.panel;
-            let chosen = match tab {
-                PanelTab::Git => "git",
-                PanelTab::Files => "files",
-            };
-            let switch = SegmentedControl::new("panel-tab", chosen)
-                .segment("git", "Git", None)
-                .segment("files", "Files", None)
-                .size(ControlSize::Sm)
-                .on_change(|value, _, cx| show_tab(value, cx));
-            let quiet = self
-                .sessions
-                .get(self.active)
-                .is_some_and(|session| !session.reports);
-            let caption = || Caption::new("This shell reports no folder.").px_3().pt_2();
-            // Hidden, not dropped, so each keeps its state.
-            let body = |on: bool| {
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .p_2()
-                    .when(!on, |body| body.hidden())
-            };
-            // Git's list draws every row, so terminal output must not redraw it.
-            let fill = || StyleRefinement::default().size_full();
-            shell = shell.column(terminal).column(
-                self.side_column(Side::Panel, cx)
-                    .action(end)
-                    // Below the title bar, clear of Windows' caption buttons.
-                    .child(div().flex().justify_center().px_2().pt_2().child(switch))
-                    .children(quiet.then(caption))
-                    .child(body(tab == PanelTab::Git).child(self.git.clone().cached(fill())))
-                    .child(body(tab == PanelTab::Files).child(self.files.clone())),
-            );
+            shell = shell.column(terminal).column(self.right_panel(end, cx));
         } else {
             shell = shell.column(terminal.action(end));
         }
