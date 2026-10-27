@@ -113,7 +113,7 @@ impl Archive {
         }
         for host in &self.hosts {
             host.host(if host.key.is_some() {
-                "/key".into()
+                if cfg!(windows) { r"C:\key" } else { "/key" }.into()
             } else {
                 String::new()
             })

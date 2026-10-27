@@ -50,9 +50,21 @@ jobs:
     needs: package
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: write
     steps:
       - uses: actions/checkout@v7
+      - name: Require passing CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ci=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --commit "$GITHUB_SHA" --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$ci" ]; then
+            echo "release: no CI run found for $GITHUB_SHA" >&2
+            exit 1
+          fi
+          gh run watch "$ci" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
       - uses: actions/download-artifact@v4
         with:
           pattern: MioTerm-*

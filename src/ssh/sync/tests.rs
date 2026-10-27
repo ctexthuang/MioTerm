@@ -123,6 +123,27 @@ fn archives_contain_key_material_instead_of_machine_specific_paths_or_recent_his
 }
 
 #[test]
+fn portable_hosts_validate_without_preserving_a_machine_specific_key_path() {
+    let folder = Folder::new();
+    let mut local = folder.local("portable-key");
+    local.hosts[0].auth = crate::ssh::Authentication::PrivateKey;
+    let archive = Archive::capture(&local).unwrap();
+    let value = serde_json::to_value(&archive).unwrap();
+    assert!(value["hosts"][0]["key"].as_str().is_some());
+    assert!(value["hosts"][0].get("identity").is_none());
+    assert!(archive.validate().is_ok());
+    let mut missing_key = value.clone();
+    missing_key["hosts"][0]["key"] = serde_json::Value::Null;
+    missing_key["keys"] = serde_json::json!({});
+    let invalid: Archive = serde_json::from_value(missing_key).unwrap();
+    assert!(invalid.validate().is_err());
+    let mut bad_host = value;
+    bad_host["hosts"][0]["address"] = serde_json::json!("-invalid");
+    let invalid: Archive = serde_json::from_value(bad_host).unwrap();
+    assert!(invalid.validate().is_err());
+}
+
+#[test]
 fn the_encrypted_bundle_round_trips_and_rejects_wrong_passwords_and_tampering() {
     let folder = Folder::new();
     let archive = Archive::capture(&folder.local("secret-key")).unwrap();

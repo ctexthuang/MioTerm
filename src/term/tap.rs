@@ -371,12 +371,12 @@ fn folder_at(body: &[u8], remote: bool) -> Option<PathBuf> {
     let slash = rest.iter().position(|&byte| byte == b'/')?;
     let host = String::from_utf8_lossy(&rest[..slash]);
     let local = gethostname::gethostname();
-    if !remote
-        && !(host.is_empty()
-            || host.eq_ignore_ascii_case("localhost")
-            || local
-                .to_str()
-                .is_some_and(|name| host.eq_ignore_ascii_case(name)))
+    if !(remote
+        || host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || local
+            .to_str()
+            .is_some_and(|name| host.eq_ignore_ascii_case(name)))
     {
         log::debug!("pty: OSC 7 from host {host}, not this one");
         return None;

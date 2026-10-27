@@ -228,7 +228,7 @@ git merge upstream/main
 
 CI 使用 GitHub 托管的 macOS、Windows 和 Ubuntu runner，不需要原作者的自托管机器；macOS 会安装 shell 测试需要的 fish，Linux 保留原有的容器测试环境。CI 负责检查、测试和编译，不会自动发布安装包。
 
-手动触发的 Release 工作流使用 GitHub 托管环境构建 macOS arm64、Windows x86_64 和 Linux x86_64 安装包。三端打包均成功后，以当前版本创建 Preview 预发布，附上安装包与 SHA-256 校验文件；不使用原作者的签名身份或私钥，也不会覆盖上游的旧版本标签。发布后再次构建需要先提升版本号。
+手动触发的 Release 工作流使用 GitHub 托管环境构建 macOS arm64、Windows x86_64 和 Linux x86_64 安装包。同一提交的三端 CI 检查和打包均成功后，以当前版本创建 Preview 预发布，附上安装包与 SHA-256 校验文件；不使用原作者的签名身份或私钥，也不会覆盖上游的旧版本标签。发布后再次构建需要先提升版本号。
 
 发布附件脚本 `scripts/release-asset.sh` 默认上传到 `ctexthuang/MioTerm`。日后配置自己的 Developer ID 和公证凭据后，`scripts/mac-app.sh` 仍支持正式签名与公证；默认测试构建不需要这些凭据。
 
