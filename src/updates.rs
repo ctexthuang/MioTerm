@@ -195,7 +195,7 @@ mod tests {
             "this one"
         );
         assert_eq!(
-            newer(release("v0.0.1")).expect("reads"),
+            newer(release("v0.0.0")).expect("reads"),
             None,
             "an older one"
         );

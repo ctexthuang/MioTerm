@@ -14,7 +14,7 @@
 - 本修改版主要扩展 SSH、SFTP、远程 Git、系统监控、WebDAV 同步及相关交互，不将这些新增功能归为上游已发布功能。
 - 原项目的版权声明、MIT 许可证和第三方许可文件予以保留。感谢原作者和所有上游贡献者。
 
-当前 `Cargo.toml` 的版本号为 `0.1.8`，修改版仍在开发中。测试包通过本仓库的 Releases 以 Preview 预发布形式提供；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
+当前 `Cargo.toml` 的版本号为 `0.0.1`，修改版仍在开发中。测试包通过本仓库的 Releases 以 Preview 预发布形式提供；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
 
 ## 当前功能
 
@@ -226,9 +226,18 @@ git merge upstream/main
 
 合并冲突需要逐项处理，保留 MioTerm 的 SSH 增强功能、仓库地址和更新来源。完成测试后，再执行 `git push origin main`。上游代码同步与应用发行更新是两条独立流程，不会在启动时自动合并源码或覆盖本地改动。
 
-CI 使用 GitHub 托管的 macOS、Windows 和 Ubuntu runner，不需要原作者的自托管机器；macOS 会安装 shell 测试需要的 fish，Linux 保留原有的容器测试环境。CI 负责检查、测试和编译，不会自动发布安装包。
+检查、测试、打包和发布统一在一个 `Release` 工作流中。普通分支提交、PR 和手动操作都不会触发；只有推送 `v` 开头的版本 tag 才会运行。tag 必须等于 `Cargo.toml` 版本号加 `v` 前缀，否则在开始三端构建前失败。
 
-手动触发的 Release 工作流使用 GitHub 托管环境构建 macOS arm64、Windows x86_64 和 Linux x86_64 安装包。同一提交的三端 CI 检查和打包均成功后，以当前版本创建 Preview 预发布，附上安装包与 SHA-256 校验文件；不使用原作者的签名身份或私钥，也不会覆盖上游的旧版本标签。发布后再次构建需要先提升版本号。
+工作流使用 GitHub 托管的 macOS、Windows 和 Ubuntu runner，不需要原作者的自托管机器；macOS 会安装 shell 测试需要的 fish，Linux 保留原有的容器测试环境。同一次运行中包含三端任务，全部检查和打包成功后，使用已推送的 tag 创建 Preview 预发布，附上 macOS arm64、Windows x86_64、Linux x86_64 安装包与 SHA-256 校验文件；不使用原作者的签名身份或私钥，也不会覆盖上游的旧版本标签。
+
+发布新版本时，先更新 `Cargo.toml` 和 `Cargo.lock` 中的项目版本，提交并推送到 `origin/main`，再推送对应的新 tag。例如版本为 `0.0.2` 时：
+
+```sh
+git tag -a v0.0.2 -m "MioTerm 0.0.2"
+git push origin v0.0.2
+```
+
+不要复用已有版本 tag；修复后重新发布应提升版本号。失败的构建可以在 Actions 中重新运行同一次工作流。旧的 CI 和 Release 历史记录仍会保留，但新的普通提交不再产生运行记录。
 
 发布附件脚本 `scripts/release-asset.sh` 默认上传到 `ctexthuang/MioTerm`。日后配置自己的 Developer ID 和公证凭据后，`scripts/mac-app.sh` 仍支持正式签名与公证；默认测试构建不需要这些凭据。
 
