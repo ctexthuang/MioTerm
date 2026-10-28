@@ -94,7 +94,7 @@ fn uploading_on_one_machine_and_restoring_on_another_transfers_the_actual_key() 
             username: "fixture".into(),
         },
         password: SecretString::from("test only".to_string()),
-        passphrase: SecretString::from("generated test passphrase only".to_string()),
+        passphrase: SecretString::from("635841".to_string()),
         local,
         key_folder,
         restore_only,

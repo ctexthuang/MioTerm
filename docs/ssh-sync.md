@@ -5,11 +5,13 @@ and WebDAV remains the default for existing installations. Provider, vault name,
 credential opt-in and token retention preference are nonsecret settings.
 The WebDAV password and the separate encryption
 passphrase are entered for each operation and are never written to settings.
-The encryption passphrase must have at least 12 characters. Losing it means
+The encryption passphrase must have at least 6 characters. Losing it means
 losing access to the archive; there is no password reset or recovery key.
 
 ## Operations
 
+- Save stores synchronization settings without validating or retaining the
+  encryption passphrase; it does not synchronize the archive.
 - Sync now downloads and decrypts the existing archive, merges saved hosts,
   encrypts the combined archive, conditionally uploads it, and imports the merged
   hosts locally.

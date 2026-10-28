@@ -58,7 +58,7 @@ impl SyncPage {
             ),
             passphrase: field(
                 "Encryption passphrase",
-                "At least 12 characters",
+                "At least 6 characters",
                 String::new(),
                 true,
             ),
@@ -178,7 +178,7 @@ impl SyncPage {
             let result: anyhow::Result<_> = work.await;
             let message = cx.update(|cx| {
                 let result = result.and_then(|restored| {
-                    let Some(restored) = restored else { return Ok("Synchronization settings saved.".into()); };
+                    let Some(restored) = restored else { return Ok("Settings saved. Click Sync now to synchronize.".into()); };
                     let (hosts, keys, credentials) = (restored.hosts, restored.keys, restored.credentials);
                     HostStore::update(cx, |local| restored.apply(local))?;
                     Ok(format!("Merged {hosts} hosts, {keys} private keys and {credentials} credentials. Deletions are not propagated."))

@@ -102,7 +102,7 @@ fn saved_token_round_trips_private_keys_credentials_and_concurrent_snapshots() -
     let settings = Gitee {
         vault: format!("mt{:012x}", stamp & 0xffffffffffff),
     };
-    let passphrase = age::x25519::Identity::generate().to_string();
+    let passphrase = SecretString::from("635841".to_string());
     let mut vault = Vault {
         client: Client::new(&settings, &token)?,
         created: Vec::new(),

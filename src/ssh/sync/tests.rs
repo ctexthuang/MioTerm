@@ -144,10 +144,26 @@ fn portable_hosts_validate_without_preserving_a_machine_specific_key_path() {
 }
 
 #[test]
+fn encryption_passphrases_require_at_least_six_characters() {
+    for value in ["", "a", "abcde", "12345", "测试口令短"] {
+        assert!(crypto::validate_passphrase(&SecretString::from(value.to_string())).is_err());
+    }
+    for value in [
+        "abcdef",
+        "123456",
+        "abcdefg",
+        "abcdefghijkl",
+        "测试口令六字",
+    ] {
+        assert!(crypto::validate_passphrase(&SecretString::from(value.to_string())).is_ok());
+    }
+}
+
+#[test]
 fn the_encrypted_bundle_round_trips_and_rejects_wrong_passwords_and_tampering() {
     let folder = Folder::new();
     let archive = Archive::capture(&folder.local("secret-key")).unwrap();
-    let password = SecretString::from("only a generated test passphrase".to_string());
+    let password = SecretString::from("abcdef".to_string());
     let mut encrypted = crypto::encrypt(&archive, &password).unwrap();
     assert!(encrypted.starts_with(b"age-encryption.org/v1\n"));
     assert!(!encrypted.windows(11).any(|part| part == b"example.com"));

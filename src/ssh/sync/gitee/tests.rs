@@ -92,7 +92,7 @@ fn snippet(id: &str, encrypted: &[u8]) -> Value {
 }
 
 fn phrase() -> SecretString {
-    SecretString::from("fixture encryption phrase".to_string())
+    SecretString::from("635841".to_string())
 }
 
 #[test]
