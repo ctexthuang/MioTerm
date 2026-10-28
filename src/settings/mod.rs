@@ -91,6 +91,7 @@ pub struct Settings {
     pub window_width: f32,
     pub window_height: f32,
     pub webdav: crate::ssh::sync::WebDav,
+    pub sync: crate::ssh::sync::SyncSettings,
 }
 
 impl Default for Settings {
@@ -125,6 +126,7 @@ impl Default for Settings {
             window_width: 1200.0,
             window_height: 760.0,
             webdav: crate::ssh::sync::WebDav::default(),
+            sync: crate::ssh::sync::SyncSettings::default(),
         }
     }
 }
@@ -142,6 +144,7 @@ impl Settings {
     /// Every value inside its range, every theme built in; the error names the field.
     pub fn validate(&self) -> anyhow::Result<()> {
         self.webdav.validate()?;
+        self.sync.gitee.validate()?;
         within("font_size", self.font_size, &FONT_SIZE)?;
         within("line_height", self.line_height, &LINE_HEIGHT)?;
         within("background_opacity", self.background_opacity, &OPACITY)?;

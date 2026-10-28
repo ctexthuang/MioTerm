@@ -44,14 +44,17 @@ fn current_sid() -> anyhow::Result<String> {
     let mut token = ptr::null_mut();
     checked(
         unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) },
-        "WebDAV: cannot read the Windows access token",
+        "SSH sync: cannot read the Windows access token",
     )?;
     let _token = unsafe { OwnedHandle::from_raw_handle(token) };
     let mut needed = 0;
     unsafe {
         GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut needed);
     }
-    ensure!(needed > 0, "WebDAV: Windows returned an empty access token");
+    ensure!(
+        needed > 0,
+        "SSH sync: Windows returned an empty access token"
+    );
     let mut buffer = vec![0usize; (needed as usize).div_ceil(size_of::<usize>())];
     checked(
         unsafe {
@@ -63,13 +66,13 @@ fn current_sid() -> anyhow::Result<String> {
                 &mut needed,
             )
         },
-        "WebDAV: cannot read the Windows key owner's SID",
+        "SSH sync: cannot read the Windows key owner's SID",
     )?;
     let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
     let mut sid = ptr::null_mut();
     checked(
         unsafe { ConvertSidToStringSidW(user.User.Sid, &mut sid) },
-        "WebDAV: cannot encode the Windows key owner's SID",
+        "SSH sync: cannot encode the Windows key owner's SID",
     )?;
     let _sid = LocalBuffer(sid.cast());
     let mut length = 0;
@@ -77,7 +80,7 @@ fn current_sid() -> anyhow::Result<String> {
         length += 1;
     }
     String::from_utf16(unsafe { std::slice::from_raw_parts(sid, length) })
-        .context("WebDAV: Windows returned an invalid owner SID")
+        .context("SSH sync: Windows returned an invalid owner SID")
 }
 
 pub(super) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
@@ -97,7 +100,7 @@ pub(super) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
                 ptr::null_mut(),
             )
         },
-        "WebDAV: cannot build a private Windows key ACL",
+        "SSH sync: cannot build a private Windows key ACL",
     )?;
     let _security = LocalBuffer(security);
     let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -111,6 +114,6 @@ pub(super) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
                 security,
             )
         },
-        "WebDAV: cannot restrict the restored key to the current Windows user",
+        "SSH sync: cannot restrict the restored key to the current Windows user",
     )
 }

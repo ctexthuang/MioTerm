@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{process::Command, sync::Mutex};
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,8 @@ use super::Host;
 use crate::term::Launch;
 
 pub mod askpass;
+
+static CREDENTIAL_WRITES: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,6 +100,13 @@ pub fn load(host: &Host) -> anyhow::Result<Option<Zeroizing<String>>> {
 }
 
 pub fn forget(host: &Host) -> anyhow::Result<()> {
+    let _guard = CREDENTIAL_WRITES
+        .lock()
+        .map_err(|_| anyhow::anyhow!("ssh: credential writer is unavailable"))?;
+    forget_entry(host)
+}
+
+fn forget_entry(host: &Host) -> anyhow::Result<()> {
     match entry(host)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(error).context("ssh: cannot remove the saved credential"),
@@ -105,8 +114,11 @@ pub fn forget(host: &Host) -> anyhow::Result<()> {
 }
 
 pub fn save(host: &Host, secret: &str) -> anyhow::Result<()> {
+    let _guard = CREDENTIAL_WRITES
+        .lock()
+        .map_err(|_| anyhow::anyhow!("ssh: credential writer is unavailable"))?;
     if !host.remember_secret {
-        return forget(host);
+        return forget_entry(host);
     }
     if secret.is_empty() {
         ensure!(
@@ -130,6 +142,28 @@ pub fn save(host: &Host, secret: &str) -> anyhow::Result<()> {
         "ssh: credential saved in the system store for {}",
         host.destination()
     );
+    Ok(())
+}
+
+pub(super) fn import(host: &Host, secret: &str) -> anyhow::Result<()> {
+    let _guard = CREDENTIAL_WRITES
+        .lock()
+        .map_err(|_| anyhow::anyhow!("ssh: credential writer is unavailable"))?;
+    if let Some(existing) = load(host)? {
+        ensure!(
+            existing.as_str() == secret,
+            "SSH sync: local credential changed; it was not overwritten"
+        );
+        return Ok(());
+    }
+    ensure!(
+        !secret.is_empty() && secret.len() <= 1023 && !secret.contains(['\0', '\r', '\n']),
+        "SSH sync: invalid credential to restore"
+    );
+    entry(host)?
+        .set_password(secret)
+        .context("SSH sync: cannot restore credential to the system store")?;
+    log::info!("SSH sync: credential restored to the system store");
     Ok(())
 }
 

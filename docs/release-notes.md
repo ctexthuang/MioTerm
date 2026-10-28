@@ -1,12 +1,28 @@
-# MioTerm Preview
+# MioTerm 0.0.2 Preview
 
 MioTerm is an independent fork of ELYTerminal, extended with SSH hosts,
-SFTP transfers, remote Git, system monitoring and encrypted WebDAV sync.
+SFTP transfers, remote Git, system monitoring and encrypted Gitee/WebDAV sync.
 
 Upstream: https://github.com/ELY-Open-Source/ELYTerminal
 
 The upstream copyright and MIT license are retained. Bundled license
 files are included with each package. This is not an upstream release.
+
+## New In 0.0.2
+
+- Settings > Sync selects Gitee private snippets or the existing WebDAV backend.
+- Connections and actual private keys are encrypted locally with an independent
+  passphrase before upload; Gitee tokens can be kept in the OS credential store.
+- Saved SSH passwords and key passphrases can optionally sync in the encrypted
+  archive and restore to the destination OS credential store. This is off by default.
+- Gitee uses immutable private snapshots to preserve concurrent changes. History
+  is not automatically deleted; old encrypted credentials may remain in history.
+- Different existing credentials are never silently overwritten. Gitee snapshots
+  are limited to 512 KiB; use WebDAV for larger archives.
+
+Authenticated Gitee upload/restore, independent snapshot merge, native macOS
+credential restoration, OpenSSH key verification and wrong-passphrase rejection
+were tested using temporary fixtures. Test snippets and credentials were removed.
 
 ## Packages
 

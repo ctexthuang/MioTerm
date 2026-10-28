@@ -86,6 +86,9 @@ fn uploading_on_one_machine_and_restoring_on_another_transfers_the_actual_key() 
         })
         .unwrap();
     let request = |local, key_folder, restore_only| Request {
+        gitee: None,
+        include_credentials: false,
+        remember_token: false,
         settings: WebDav {
             url: "https://example.com/dav".into(),
             username: "fixture".into(),

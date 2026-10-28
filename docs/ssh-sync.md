@@ -1,7 +1,9 @@
-# SSH WebDAV Sync
+# SSH Encrypted Sync
 
-Settings > WebDAV Sync accepts an existing HTTPS WebDAV folder and a username.
-Only those two fields are saved. The WebDAV password and the separate encryption
+Settings > Sync selects Gitee or WebDAV. Existing WebDAV settings remain valid
+and WebDAV remains the default for existing installations. Provider, vault name,
+credential opt-in and token retention preference are nonsecret settings.
+The WebDAV password and the separate encryption
 passphrase are entered for each operation and are never written to settings.
 The encryption passphrase must have at least 12 characters. Losing it means
 losing access to the archive; there is no password reset or recovery key.
@@ -18,6 +20,59 @@ losing access to the archive; there is no password reset or recovery key.
   automatic deletion propagation or last-writer-wins replacement.
 - Recent connection history, terminal contents, settings and known_hosts are
   not synchronized.
+
+## Gitee
+
+Create a personal access token with gists permission, select Gitee, and choose
+a vault name (1-16 ASCII letters, digits, underscores or hyphens). Use the same
+account, vault name and encryption passphrase on each machine. A snippet ID is
+not needed. Optional token retention uses the OS credential store, not settings.
+The token is never included in the archive and is independent of encryption.
+
+The client uses the fixed HTTPS API origin, a sensitive Bearer authorization
+header, verified certificates and no redirects. Tokens never enter URLs.
+It does not follow snippet raw/download URLs. Public, incomplete, truncated,
+oversized or malformed snapshots are refused. Errors do not include response
+bodies, authorization headers or transport exception details.
+
+Each upload creates a new private snippet, identified by the description
+`MioTerm Sync NAME`, containing a Base64-encoded age ciphertext. The encrypted
+snapshot may not exceed 512 KiB. WebDAV supports larger archives.
+
+Gitee's documented gist API does not specify conditional atomic replacement.
+The client therefore never PATCHes or DELETEs an existing snippet. Concurrent
+devices create independent snapshots instead of overwriting each other. The
+next synchronization merges their union. Authenticated history inside each
+encrypted archive records snapshots already incorporated, allowing old snapshots
+to be skipped without trusting plaintext server-provided ancestry.
+
+Listing is bounded to ten pages of 100 snippets. A full tenth page is refused
+rather than silently omitting older data. At most 32 uncovered snapshots are
+decrypted per operation. Restore is read-only. History is not automatically
+deleted; old snapshots may retain old encrypted credentials. Before manually
+deleting history in Gitee, verify that the latest complete snapshot contains
+all required data. Keep a separate backup. Use a new vault name to rotate the
+encryption passphrase; existing snapshots still require their original one.
+
+## Optional SSH Credentials
+
+The credential switch defaults to off. When enabled, explicitly remembered SSH
+passwords and private-key passphrases are read from the OS credential store and
+included only inside the encrypted archive. Missing remembered passwords fail
+capture. Agent/default/hardware key credentials are not exported.
+
+Credentials are associated with portable host metadata, authentication method
+and key digest, not the old machine's absolute identity path. Restore writes
+them to the target machine's OS credential store using the installed key path
+and enables remembered credentials on those hosts. Credential buffers are
+zeroized on drop. No credential value is written to connections or settings.
+
+Different credentials for the same portable host stop a merge; a different
+existing local credential stops restore. Local app credential writers are
+serialized within a process and imports never replace an existing different value. Resolve
+conflicting credentials explicitly; to replace an older cloud credential set,
+use a new vault (or a new WebDAV folder) after checking the local entries.
+Turning the switch off does not erase credentials from existing cloud archives.
 
 ## Private Keys
 
@@ -75,3 +130,18 @@ identity derives the same public key. Loopback HTTP fixtures cover conditional
 GET/PUT flows, HTTP 412, authentication errors, redirects and absent ETags.
 An end-to-end loopback test uploads an encrypted archive, removes the source key,
 and restores the host and actual key into another machine's directory.
+Gitee fixtures also exercise POST-only private snapshots, pagination, public or
+truncated responses, malformed ciphertext, token rotation, independent concurrent
+snapshots, authenticated history and key/password restoration. OS credential
+operations use an isolated in-memory store in ordinary unit tests. A real Gitee
+account/token is required for a live authenticated service test.
+
+The ignored `ssh::sync::gitee::live` test reads only the Gitee token saved by the
+app. It uses a uniquely named temporary vault, generated encrypted SSH key and
+fixture credentials, never the user's hosts or keys. It verifies authenticated
+upload/restore, independent snapshots, native credential import and OpenSSH key
+identity, then removes only its own snapshots and OS credential entries. On macOS:
+
+```sh
+cargo test --release --features gpui_platform/runtime_shaders --lib ssh::sync::gitee::live:: -- --ignored --nocapture
+```

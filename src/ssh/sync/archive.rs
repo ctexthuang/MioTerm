@@ -6,13 +6,23 @@ use std::{
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 
-use super::{Connections, Host, keys::Key};
+use super::{
+    Connections, Host,
+    credentials::{Credential, Store},
+    keys::Key,
+};
+
+use sha2::{Digest as _, Sha256};
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Archive {
     pub hosts: BTreeSet<PortableHost>,
     pub keys: BTreeMap<String, Key>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub credentials: BTreeMap<String, Credential>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub snapshots: BTreeSet<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -29,6 +39,21 @@ pub(super) struct PortableHost {
 }
 
 impl PortableHost {
+    fn id(&self) -> String {
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(self).expect("portable SSH host"))
+        )
+    }
+
+    fn capture(host: &Host) -> anyhow::Result<Self> {
+        let key = if host.identity.is_empty() {
+            None
+        } else {
+            Some(Key::capture(Path::new(&host.identity))?.id())
+        };
+        Ok(Self::new(host, key))
+    }
     fn new(host: &Host, key: Option<String>) -> Self {
         Self {
             name: host.name.clone(),
@@ -83,7 +108,7 @@ impl Archive {
                 None
             } else {
                 let key = Key::capture(Path::new(&host.identity)).with_context(|| {
-                    format!("WebDAV: cannot include the key for {}", host.label())
+                    format!("SSH sync: cannot include the key for {}", host.label())
                 })?;
                 let id = key.id();
                 archive.keys.insert(id.clone(), key);
@@ -98,17 +123,40 @@ impl Archive {
     pub fn validate(&self) -> anyhow::Result<()> {
         ensure!(
             self.hosts.len() <= 10000 && self.keys.len() <= 1000,
-            "WebDAV: too many hosts or keys"
+            "SSH sync: too many hosts or keys"
         );
+        ensure!(
+            self.snapshots.len() <= 10000,
+            "SSH sync: snapshot history is too large"
+        );
+        for snapshot in &self.snapshots {
+            super::gitee::validate_id(snapshot)?;
+        }
+        ensure!(
+            self.credentials.len() <= self.hosts.len(),
+            "SSH sync: too many credentials"
+        );
+        let credential_hosts: BTreeMap<_, _> = self
+            .hosts
+            .iter()
+            .map(|host| (host.id(), host.auth.has_secret()))
+            .collect();
+        for (id, credential) in &self.credentials {
+            ensure!(
+                credential_hosts.get(id) == Some(&true),
+                "SSH sync: credential does not belong to a password or private-key host"
+            );
+            credential.validate()?;
+        }
         for (id, key) in &self.keys {
             key.validate()?;
             ensure!(
                 *id == key.id(),
-                "WebDAV: SSH key digest does not match its contents"
+                "SSH sync: SSH key digest does not match its contents"
             );
             ensure!(
                 self.hosts.iter().any(|host| host.key.as_ref() == Some(id)),
-                "WebDAV: unreferenced SSH key"
+                "SSH sync: unreferenced SSH key"
             );
         }
         for host in &self.hosts {
@@ -121,7 +169,7 @@ impl Archive {
             if let Some(key) = &host.key {
                 ensure!(
                     self.keys.contains_key(key),
-                    "WebDAV: a host references a missing private key"
+                    "SSH sync: a host references a missing private key"
                 );
             }
         }
@@ -130,11 +178,82 @@ impl Archive {
 
     pub fn merge(&mut self, other: Self) -> anyhow::Result<()> {
         other.validate()?;
+        for (id, credential) in other.credentials {
+            if let Some(existing) = self.credentials.get(&id) {
+                ensure!(
+                    existing == &credential,
+                    "SSH sync: credentials differ between devices; resolve them before synchronizing"
+                );
+            } else {
+                self.credentials.insert(id, credential);
+            }
+        }
+        self.snapshots.extend(other.snapshots);
         self.hosts.extend(other.hosts);
         for (id, key) in other.keys {
             self.keys.entry(id).or_insert(key);
         }
         self.validate()
+    }
+
+    pub fn capture_credentials(
+        &mut self,
+        local: &Connections,
+        store: &impl Store,
+    ) -> anyhow::Result<()> {
+        for host in &local.hosts {
+            if host.remember_secret && host.auth.has_secret() {
+                match store.load(host)? {
+                    Some(secret) => {
+                        self.credentials.insert(
+                            PortableHost::capture(host)?.id(),
+                            Credential(secret.to_string()),
+                        );
+                    }
+                    None => ensure!(
+                        host.auth != crate::ssh::Authentication::Password,
+                        "SSH sync: a remembered SSH password is missing from the system credential store"
+                    ),
+                }
+            }
+        }
+        self.validate()
+    }
+
+    pub fn restore_credentials(
+        &self,
+        local: &mut Connections,
+        store: &impl Store,
+    ) -> anyhow::Result<usize> {
+        let mut pending = Vec::new();
+        for host in &local.hosts {
+            if !self.hosts.iter().any(|portable| portable.same_fields(host)) {
+                continue;
+            }
+            if let Some(credential) = self.credentials.get(&PortableHost::capture(host)?.id()) {
+                let existing = store.load(host)?;
+                ensure!(
+                    existing
+                        .as_deref()
+                        .map(|secret| secret.as_str())
+                        .is_none_or(|secret| secret == credential.0),
+                    "SSH sync: a local credential differs from the archive; it was not overwritten"
+                );
+                pending.push((host.id, credential, existing.is_none()));
+            }
+        }
+        for (id, credential, missing) in &pending {
+            let host = local
+                .hosts
+                .iter_mut()
+                .find(|host| host.id == *id)
+                .expect("restored SSH host");
+            host.remember_secret = true;
+            if *missing {
+                store.insert(host, &credential.0)?;
+            }
+        }
+        Ok(pending.len())
     }
 
     pub fn restore(&self, mut local: Connections, folder: &Path) -> anyhow::Result<Connections> {
@@ -157,7 +276,7 @@ impl Archive {
                     installed
                         .get(key)
                         .cloned()
-                        .context("WebDAV: restored key is missing")
+                        .context("SSH sync: restored key is missing")
                 })
                 .transpose()?
                 .unwrap_or_default();

@@ -8,10 +8,10 @@ use age::secrecy::SecretString;
 
 use super::*;
 
-struct Folder(PathBuf);
+pub(super) struct Folder(pub(super) PathBuf);
 
 impl Folder {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         static COUNT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "ely-webdav-{}-{}",
@@ -22,7 +22,7 @@ impl Folder {
         Self(path)
     }
 
-    fn local(&self, name: &str) -> Connections {
+    pub(super) fn local(&self, name: &str) -> Connections {
         let key = self.0.join(name);
         fs::write(&key, format!("-----BEGIN OPENSSH PRIVATE KEY-----\nTEST FIXTURE {name}\n-----END OPENSSH PRIVATE KEY-----\n")).unwrap();
         let mut data = Connections::default();
@@ -215,6 +215,7 @@ fn applying_sync_never_overwrites_a_host_edited_while_the_network_was_busy() {
         connections: local,
         hosts: 1,
         keys: 1,
+        credentials: 0,
     };
     assert!(restored.apply(&mut edited).is_err());
     assert_eq!(edited.hosts[0].name, "Edited during sync");
@@ -239,6 +240,7 @@ fn applying_sync_preserves_allocated_ids_and_does_not_reassign_an_old_recent_tar
         connections: imported.clone(),
         hosts: 1,
         keys: 1,
+        credentials: 0,
     };
     let mut allocated = local.clone();
     allocated.next_id += 1;

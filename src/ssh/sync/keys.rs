@@ -38,7 +38,9 @@ impl Key {
         let certificate = match fs::symlink_metadata(certificate) {
             Ok(_) => Some(STANDARD.encode(read(certificate)?)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error).context("WebDAV: cannot inspect the SSH certificate"),
+            Err(error) => {
+                return Err(error).context("SSH sync: cannot inspect the SSH certificate");
+            }
         };
         let key = Self {
             private: STANDARD.encode(&bytes),
@@ -52,7 +54,7 @@ impl Key {
         STANDARD
             .decode(&self.private)
             .map(Zeroizing::new)
-            .map_err(|_| anyhow::anyhow!("WebDAV: invalid private key encoding"))
+            .map_err(|_| anyhow::anyhow!("SSH sync: invalid private key encoding"))
     }
 
     fn certificate(&self) -> anyhow::Result<Option<Zeroizing<Vec<u8>>>> {
@@ -62,7 +64,7 @@ impl Key {
                 STANDARD
                     .decode(value)
                     .map(Zeroizing::new)
-                    .map_err(|_| anyhow::anyhow!("WebDAV: invalid SSH certificate encoding"))
+                    .map_err(|_| anyhow::anyhow!("SSH sync: invalid SSH certificate encoding"))
             })
             .transpose()
     }
@@ -70,15 +72,15 @@ impl Key {
     pub fn validate(&self) -> anyhow::Result<()> {
         ensure!(
             self.private.len() <= KEY_LIMIT * 2,
-            "WebDAV: private key is too large"
+            "SSH sync: private key is too large"
         );
         let private = self.decode()?;
         ensure!(
             !private.is_empty() && private.len() <= KEY_LIMIT,
-            "WebDAV: invalid private key size"
+            "SSH sync: invalid private key size"
         );
         let text = std::str::from_utf8(&private)
-            .map_err(|_| anyhow::anyhow!("WebDAV: identity is not a text SSH private key"))?;
+            .map_err(|_| anyhow::anyhow!("SSH sync: identity is not a text SSH private key"))?;
         ensure!(
             ["OPENSSH", "RSA", "EC", "DSA", "ENCRYPTED", ""]
                 .iter()
@@ -91,12 +93,12 @@ impl Key {
                     text.trim().starts_with(&format!("-----BEGIN {name}-----"))
                         && text.trim().ends_with(&format!("-----END {name}-----"))
                 }),
-            "WebDAV: identity must be an OpenSSH or PEM private key, not a public key or agent reference"
+            "SSH sync: identity must be an OpenSSH or PEM private key, not a public key or agent reference"
         );
         if let Some(certificate) = &self.certificate {
             ensure!(
                 certificate.len() <= KEY_LIMIT * 2,
-                "WebDAV: SSH certificate is too large"
+                "SSH sync: SSH certificate is too large"
             );
             let certificate = self.certificate()?.expect("the certificate is present");
             ensure!(
@@ -105,7 +107,7 @@ impl Key {
                         .split(|byte| *byte == b' ')
                         .next()
                         .is_some_and(|kind| kind.ends_with(b"-cert-v01@openssh.com")),
-                "WebDAV: invalid SSH certificate"
+                "SSH sync: invalid SSH certificate"
             );
         }
         Ok(())
@@ -133,7 +135,7 @@ impl Key {
         }
         path.to_str()
             .map(str::to_owned)
-            .context("WebDAV: restored key path is not UTF-8")
+            .context("SSH sync: restored key path is not UTF-8")
     }
 }
 
@@ -141,28 +143,33 @@ fn read(path: &Path) -> anyhow::Result<Zeroizing<Vec<u8>>> {
     ensure!(
         fs::metadata(path)
             .with_context(|| format!(
-                "WebDAV: cannot inspect referenced SSH key {}",
+                "SSH sync: cannot inspect referenced SSH key {}",
                 path.display()
             ))?
             .is_file(),
-        "WebDAV: SSH key is not a regular file"
+        "SSH sync: SSH key is not a regular file"
     );
-    let file = File::open(path)
-        .with_context(|| format!("WebDAV: cannot read referenced SSH key {}", path.display()))?;
+    let file = File::open(path).with_context(|| {
+        format!(
+            "SSH sync: cannot read referenced SSH key {}",
+            path.display()
+        )
+    })?;
     ensure!(
         file.metadata()?.is_file(),
-        "WebDAV: SSH key is not a regular file"
+        "SSH sync: SSH key is not a regular file"
     );
     let mut bytes = Zeroizing::new(Vec::new());
     file.take(KEY_LIMIT as u64 + 1)
         .read_to_end(&mut bytes)
-        .context("WebDAV: cannot read SSH key contents")?;
-    ensure!(bytes.len() <= KEY_LIMIT, "WebDAV: SSH key exceeds 64 KiB");
+        .context("SSH sync: cannot read SSH key contents")?;
+    ensure!(bytes.len() <= KEY_LIMIT, "SSH sync: SSH key exceeds 64 KiB");
     Ok(bytes)
 }
 
 fn regular(path: &Path, folder: bool) -> anyhow::Result<()> {
-    let metadata = fs::symlink_metadata(path).context("WebDAV: cannot inspect managed key path")?;
+    let metadata =
+        fs::symlink_metadata(path).context("SSH sync: cannot inspect managed key path")?;
     ensure!(
         !metadata.file_type().is_symlink()
             && if folder {
@@ -170,14 +177,14 @@ fn regular(path: &Path, folder: bool) -> anyhow::Result<()> {
             } else {
                 metadata.is_file()
             },
-        "WebDAV: managed key path is a symlink or has the wrong type"
+        "SSH sync: managed key path is a symlink or has the wrong type"
     );
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
         ensure!(
             metadata.file_attributes() & 0x400 == 0,
-            "WebDAV: managed key path is a reparse point"
+            "SSH sync: managed key path is a reparse point"
         );
     }
     #[cfg(unix)]
@@ -185,7 +192,7 @@ fn regular(path: &Path, folder: bool) -> anyhow::Result<()> {
         use std::os::unix::fs::MetadataExt;
         ensure!(
             metadata.uid() == unsafe { libc::geteuid() },
-            "WebDAV: managed key path has another owner"
+            "SSH sync: managed key path has another owner"
         );
     }
     Ok(())
@@ -194,7 +201,7 @@ fn regular(path: &Path, folder: bool) -> anyhow::Result<()> {
 fn secure_folder(path: &Path) -> anyhow::Result<()> {
     if !path
         .try_exists()
-        .context("WebDAV: cannot inspect managed key folder")?
+        .context("SSH sync: cannot inspect managed key folder")?
     {
         #[cfg(unix)]
         {
@@ -203,10 +210,10 @@ fn secure_folder(path: &Path) -> anyhow::Result<()> {
                 .recursive(true)
                 .mode(0o700)
                 .create(path)
-                .context("WebDAV: cannot create private key folder")?;
+                .context("SSH sync: cannot create private key folder")?;
         }
         #[cfg(not(unix))]
-        fs::create_dir_all(path).context("WebDAV: cannot create private key folder")?;
+        fs::create_dir_all(path).context("SSH sync: cannot create private key folder")?;
     }
     regular(path, true)?;
     protect(path, true)
@@ -215,12 +222,12 @@ fn secure_folder(path: &Path) -> anyhow::Result<()> {
 fn write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     if path
         .try_exists()
-        .context("WebDAV: cannot inspect restored key")?
+        .context("SSH sync: cannot inspect restored key")?
     {
         regular(path, false)?;
         ensure!(
             read(path)?.as_slice() == bytes,
-            "WebDAV: restored key already exists with different contents"
+            "SSH sync: restored key already exists with different contents"
         );
         return protect(path, false);
     }
@@ -233,17 +240,18 @@ fn write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     }
     let mut file = options
         .open(path)
-        .context("WebDAV: cannot create restored key")?;
+        .context("SSH sync: cannot create restored key")?;
     let saved = (|| {
         protect(path, false)?;
         file.write_all(bytes)
-            .context("WebDAV: cannot write restored key")?;
-        file.sync_all().context("WebDAV: cannot flush restored key")
+            .context("SSH sync: cannot write restored key")?;
+        file.sync_all()
+            .context("SSH sync: cannot flush restored key")
     })();
     if saved.is_err() {
         drop(file);
         if let Err(error) = fs::remove_file(path) {
-            log::error!("WebDAV: cannot remove incomplete restored key: {error}");
+            log::error!("SSH sync: cannot remove incomplete restored key: {error}");
         }
     }
     saved
@@ -256,7 +264,7 @@ fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
         path,
         fs::Permissions::from_mode(if folder { 0o700 } else { 0o600 }),
     )
-    .context("WebDAV: cannot restrict restored key permissions")
+    .context("SSH sync: cannot restrict restored key permissions")
 }
 
 #[cfg(windows)]

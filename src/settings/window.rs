@@ -31,7 +31,7 @@ const CONTEXT: &str = "Settings";
 const SECTIONS: [(&str, &str, IconName); 3] = [
     ("appearance", "Appearance", IconName::Palette),
     ("terminal", "Terminal", IconName::Terminal),
-    ("webdav", "WebDAV Sync", IconName::Cloud),
+    ("sync", "Sync", IconName::Cloud),
 ];
 
 /// Cmd-, opens the settings, Cmd-W closes them; off macOS Ctrl-, and Ctrl-Shift-W, as Ghostty's.
@@ -300,7 +300,7 @@ impl Render for SettingsWindow {
                 self.appearance(window, cx).into_any_element()
             }
             "terminal" => self.terminal(cx).into_any_element(),
-            "webdav" => self.sync.clone().into_any_element(),
+            "sync" => self.sync.clone().into_any_element(),
             other => unreachable!("settings: no section {other}"),
         };
         let page = div()

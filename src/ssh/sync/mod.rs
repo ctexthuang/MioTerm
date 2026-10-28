@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use age::secrecy::SecretString;
+use age::secrecy::{ExposeSecret, SecretString};
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -9,7 +9,13 @@ use super::{Connections, Host};
 use archive::Archive;
 
 mod archive;
+mod config;
+#[cfg(test)]
+mod credential_tests;
+mod credentials;
 mod crypto;
+mod gitee;
+pub use config::{Gitee, Provider, SyncSettings};
 #[cfg(test)]
 mod flow_tests;
 mod keys;
@@ -65,6 +71,9 @@ impl WebDav {
 
 pub struct Request {
     pub settings: WebDav,
+    pub gitee: Option<Gitee>,
+    pub include_credentials: bool,
+    pub remember_token: bool,
     pub password: SecretString,
     pub passphrase: SecretString,
     pub local: Connections,
@@ -78,13 +87,14 @@ pub struct Restored {
     pub connections: Connections,
     pub hosts: usize,
     pub keys: usize,
+    pub credentials: usize,
 }
 
 impl Restored {
     pub fn apply(self, current: &mut Connections) -> anyhow::Result<()> {
         ensure!(
             current.hosts == self.before && current.next_id == self.before_next_id,
-            "WebDAV: local hosts changed during synchronization; retry to include those changes"
+            "SSH sync: local hosts changed during synchronization; retry to include those changes"
         );
         current.hosts = self.connections.hosts;
         current.next_id = self.connections.next_id;
@@ -96,6 +106,7 @@ impl Restored {
                 && let Some(host) = current.hosts.iter().find(|host| host.id == recent.host.id)
             {
                 recent.host.identity = host.identity.clone();
+                recent.host.remember_secret = host.remember_secret;
             }
         }
         current.validate()
@@ -105,34 +116,82 @@ impl Restored {
 pub fn run(request: Request) -> anyhow::Result<Restored> {
     request.settings.validate()?;
     crypto::validate_passphrase(&request.passphrase)?;
-    let remote = webdav::Client::new(&request.settings, &request.password)?;
-    synchronize(request, remote)
+    let remote = if let Some(settings) = &request.gitee {
+        let token = if request.password.expose_secret().is_empty() && request.remember_token {
+            SecretString::from(credentials::token()?.to_string())
+        } else {
+            request.password.clone()
+        };
+        Remote::Gitee(gitee::Client::new(settings, &token)?)
+    } else {
+        Remote::WebDav(webdav::Client::new(&request.settings, &request.password)?)
+    };
+    synchronize_with(request, remote, &credentials::SystemStore)
 }
 
+enum Remote {
+    WebDav(webdav::Client),
+    Gitee(gitee::Client),
+}
+
+#[cfg(test)]
 fn synchronize(request: Request, remote: webdav::Client) -> anyhow::Result<Restored> {
-    let found = remote.get()?;
-    let mut archive = match &found {
-        Some(found) => crypto::decrypt(&found.body, &request.passphrase)?,
+    synchronize_with(request, Remote::WebDav(remote), &credentials::SystemStore)
+}
+
+fn synchronize_with(
+    request: Request,
+    remote: Remote,
+    store: &impl credentials::Store,
+) -> anyhow::Result<Restored> {
+    let mut etag = None;
+    let found = match &remote {
+        Remote::WebDav(client) => client
+            .get()?
+            .map(|found| {
+                etag = Some(found.etag);
+                crypto::decrypt(&found.body, &request.passphrase)
+            })
+            .transpose()?,
+        Remote::Gitee(client) => client.pull(&request.passphrase)?,
+    };
+    let mut archive = match found {
+        Some(found) => found,
         None if request.restore_only => {
-            anyhow::bail!("WebDAV: no SSH archive exists in this folder")
+            anyhow::bail!("SSH sync: no encrypted archive exists in this vault or folder")
         }
         None => Archive::default(),
     };
     if !request.restore_only {
-        archive.merge(Archive::capture(&request.local)?)?;
+        let mut local = Archive::capture(&request.local)?;
+        if request.include_credentials {
+            local.capture_credentials(&request.local, store)?;
+        }
+        archive.merge(local)?;
         let encrypted = crypto::encrypt(&archive, &request.passphrase)?;
-        remote.put(&encrypted, found.as_ref().map(|found| found.etag.as_str()))?;
+        match &remote {
+            Remote::WebDav(client) => client.put(&encrypted, etag.as_deref())?,
+            Remote::Gitee(client) => {
+                client.put(&encrypted)?;
+            }
+        }
     }
     let hosts = archive.hosts.len();
     let keys = archive.keys.len();
     let before = request.local.hosts.clone();
     let before_next_id = request.local.next_id;
-    let connections = archive.restore(request.local, &request.key_folder)?;
+    let mut connections = archive.restore(request.local, &request.key_folder)?;
+    let credentials = if request.include_credentials {
+        archive.restore_credentials(&mut connections, store)?
+    } else {
+        0
+    };
     Ok(Restored {
         before,
         before_next_id,
         connections,
         hosts,
         keys,
+        credentials,
     })
 }
