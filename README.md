@@ -14,7 +14,7 @@
 - 本修改版主要扩展 SSH、SFTP、远程 Git、系统监控、WebDAV 同步及相关交互，不将这些新增功能归为上游已发布功能。
 - 原项目的版权声明、MIT 许可证和第三方许可文件予以保留。感谢原作者和所有上游贡献者。
 
-当前 `Cargo.toml` 的版本号为 `0.0.3`，修改版仍在开发中。测试包通过本仓库的 Releases 以 Preview 预发布形式提供；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
+当前 `Cargo.toml` 的版本号为 `0.0.5`，修改版仍在开发中。安装包通过本仓库的 Releases 发布，最新版本标记为 Latest；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
 
 ## 当前功能
 
@@ -55,6 +55,7 @@ Windows 中仅在终端交互输入、没有保存的密码，无法直接复用
 - SSH 会话的 Files 同时显示本地和远程两个区域，本地在上、远程在下。
 - 两个区域可独立切换目录，提供路径输入、主目录、上级目录和刷新。
 - 使用系统 `sftp` 上传、下载文件及递归文件夹，支持多选与取消。
+- 可从系统文件管理器拖入文件或文件夹到下方远程区域，确认后上传到当前显示的远程目录。
 - 写入前需要确认，已有文件可能被覆盖，同名文件夹可能合并。
 - 远程 shell 每次提示符报告当前目录，`cd` 后 Files 和 Git 随之更新。
 - 从 Files 导航远程目录也会更新 Git 检查位置，但不会向终端输入 `cd`；下次 shell 提示符仍以终端目录为准。
@@ -236,13 +237,13 @@ git merge upstream/main
 
 检查、测试、打包和发布统一在一个 `Release` 工作流中。普通分支提交、PR 和手动操作都不会触发；只有推送 `v` 开头的版本 tag 才会运行。tag 必须等于 `Cargo.toml` 版本号加 `v` 前缀，否则在开始三端构建前失败。
 
-工作流使用 GitHub 托管的 macOS、Windows 和 Ubuntu runner，不需要原作者的自托管机器；macOS 会安装 shell 测试需要的 fish，Linux 保留原有的容器测试环境。同一次运行中包含三端任务，全部检查和打包成功后，使用已推送的 tag 创建 Preview 预发布，附上 macOS arm64、Windows x86_64、Linux x86_64 安装包与 SHA-256 校验文件；不使用原作者的签名身份或私钥，也不会覆盖上游的旧版本标签。
+工作流使用 GitHub 托管的 macOS、Windows 和 Ubuntu runner，不需要原作者的自托管机器；macOS 会安装 shell 测试需要的 fish，Linux 保留原有的容器测试环境。同一次运行中包含三端任务，全部检查和打包成功后，使用已推送的 tag 创建普通 Release 并标记为 Latest，附上 macOS arm64、Windows x86_64、Linux x86_64 安装包与 SHA-256 校验文件；不使用原作者的签名身份或私钥，也不会覆盖上游的旧版本标签。
 
-发布新版本时，先更新 `Cargo.toml` 和 `Cargo.lock` 中的项目版本，提交并推送到 `origin/main`，再推送对应的新 tag。例如下一个版本为 `0.0.3` 时：
+发布新版本时，先更新 `Cargo.toml` 和 `Cargo.lock` 中的项目版本，提交并推送到 `origin/main`，再推送对应的新 tag。例如版本为 `0.0.5` 时：
 
 ```sh
-git tag -a v0.0.3 -m "MioTerm 0.0.3"
-git push origin v0.0.3
+git tag -a v0.0.5 -m "MioTerm 0.0.5"
+git push origin v0.0.5
 ```
 
 不要复用已有版本 tag；修复后重新发布应提升版本号。失败的构建可以在 Actions 中重新运行同一次工作流。旧的 CI 和 Release 历史记录仍会保留，但新的普通提交不再产生运行记录。

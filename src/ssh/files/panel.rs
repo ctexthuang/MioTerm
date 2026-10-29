@@ -12,6 +12,8 @@ use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Subscription
 use super::{Entry, Listing, Remote, RemotePath, Transfer};
 
 mod actions;
+mod confirm;
+mod upload;
 mod view;
 
 pub struct FolderChanged {

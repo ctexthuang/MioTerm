@@ -155,10 +155,11 @@ impl RemoteFiles {
         cx.notify();
     }
 
-    pub(super) fn transfer(&mut self, cx: &mut Context<Self>) {
-        let Some(transfer) = self.pending.take() else {
+    pub(super) fn transfer(&mut self, transfer: Transfer, cx: &mut Context<Self>) {
+        if self.transfer.is_some() {
             return;
-        };
+        }
+        self.pending = None;
         if self.connection.as_ref() != Some(&transfer.connection) || self.disconnected {
             self.transfer_error = Some("sftp: connection changed; transfer cancelled.".into());
             return cx.notify();
@@ -167,6 +168,7 @@ impl RemoteFiles {
         let cancel = guard.0.clone();
         let connection = transfer.connection.clone();
         self.transfer = Some(guard);
+        self.transfer_error = None;
         self.transfer_status = Some(format!(
             "{} {} item(s) on {}...",
             if transfer.upload {

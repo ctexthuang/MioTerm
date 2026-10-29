@@ -4,14 +4,13 @@ use ely_gpui_component::{
     feedback::Alert,
     forms::Input,
     lists::{Tree, TreeNode},
-    overlays::ConfirmDialog,
     primitives::{Icon, IconName, Severity},
     theme::{ActiveTheme, ControlSize, TextSize},
     typography::{Caption, Ellipsis},
 };
 use gpui::{
-    Context, Div, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
+    Context, Div, ExternalPaths, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
 };
 
 use super::RemoteFiles;
@@ -205,41 +204,24 @@ impl RemoteFiles {
                     .map(|_| Caption::new("Empty folder.").px_2()),
             )
             .child(div().flex_1().min_h_0().child(tree))
-    }
-
-    fn confirm(&self, cx: &Context<Self>) -> Option<ConfirmDialog> {
-        let transfer = self.pending.as_ref()?;
-        let (close, confirm) = (cx.entity(), cx.entity());
-        let direction = if transfer.upload {
-            "Upload"
-        } else {
-            "Download"
-        };
-        let first = transfer.items.first()?;
-        let destination = if transfer.upload {
-            first.remote.parent().ok()?.shown()
-        } else {
-            crate::sessions::one_line(&first.local.parent()?.display().to_string())
-        };
-        let title = format!(
-            "{direction} {} item(s) on {}?",
-            transfer.items.len(),
-            transfer.connection.host.label()
-        );
-        let body = format!(
-            "{} → {destination}\nExisting files with the same names will be overwritten. Folders are merged. Symbolic links inside folders are not copied.",
-            transfer.connection.host.destination()
-        );
-        Some(
-            ConfirmDialog::new("sftp-confirm", title, body, move |_, cx| {
-                close.update(cx, |panel, cx| {
-                    panel.pending = None;
-                    cx.notify();
+            .when(!local, |pane| {
+                let drop = cx.entity();
+                let enabled = !self.disconnected
+                    && !browser.busy
+                    && browser.listing.is_some()
+                    && self.transfer.is_none()
+                    && self.pending.is_none();
+                pane.drag_over::<ExternalPaths>(move |style, _, _, cx| {
+                    if enabled {
+                        style.bg(cx.theme().colors.selection)
+                    } else {
+                        style
+                    }
+                })
+                .on_drop(move |paths: &ExternalPaths, _, cx| {
+                    drop.update(cx, |panel, cx| panel.drop_upload(paths.paths(), cx))
                 })
             })
-            .confirm(direction)
-            .on_confirm(move |_, cx| confirm.update(cx, |panel, cx| panel.transfer(cx))),
-        )
     }
 }
 

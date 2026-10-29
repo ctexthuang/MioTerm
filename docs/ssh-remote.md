@@ -16,6 +16,9 @@ The address fields accept paths; Home, Parent and Refresh are icon buttons.
 The remote pane initially opens the remote user's home, not the local home.
 Folder activation navigates; selecting files enables upload or download.
 Multiple selection uses the tree's existing keyboard and mouse controls.
+Dropping local files or folders from the system file manager onto the remote
+pane uploads them to its currently displayed folder, after confirmation.
+The remote pane highlights valid drop targets using the current theme.
 
 Transfers run through the system `sftp` client. Files and recursive folders are
 supported. Every transfer asks for confirmation before writing, including the
@@ -26,6 +29,9 @@ which is a link, special file or a different kind is refused.
 
 The transfer can be cancelled. Failed or cancelled transfers may leave partial
 files; this version does not promise atomic transfer, resume, or byte progress.
+The transfer bar reports running, completed and failed operations. Successful
+transfers refresh both directory listings. Confirmation captures the original
+files, host and destination; closing the dialog cannot erase the confirmed task.
 Paths containing control characters are listed safely but refused for batch
 transfer, rather than interpreted as another SFTP command. Names stay bytes in
 the directory protocol; a name not representable on the local platform is
@@ -84,6 +90,9 @@ remote paths as local folders.
 Unit tests exercise path validation, command quoting, cancellation, bounded
 processes and directory responses. On macOS, a test uses the real system SFTP
 client and `sftp-server` to round-trip special filenames and recursive folders.
+Native macOS UI checks against an isolated loopback SSH server cover Upload,
+Download, external multi-file/folder drops, confirmation cancellation, permission
+errors and directory refresh. Transferred contents are compared byte for byte.
 
 `tests/remote_ssh.rs` is opt-in. It requires a dedicated local SSH master on
 `127.0.0.1`, with `ELY_SSH_TEST_SOCKET` and `ELY_SSH_TEST_PORT` identifying it.

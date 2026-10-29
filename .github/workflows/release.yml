@@ -136,7 +136,7 @@ jobs:
           compression-level: 0
 
   publish:
-    name: Publish preview
+    name: Publish release
     needs: [macos, windows, package-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -150,7 +150,7 @@ jobs:
           pattern: MioTerm-*
           path: dist
           merge-multiple: true
-      - name: Create a prerelease with all three packages
+      - name: Create the latest release with all three packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -161,6 +161,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
-            --prerelease \
-            --title "MioTerm $version Preview" \
+            --latest \
+            --title "MioTerm $version" \
             --notes-file docs/release-notes.md
