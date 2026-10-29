@@ -49,4 +49,33 @@ pub struct SyncSettings {
     pub gitee: Gitee,
     pub include_credentials: bool,
     pub remember_token: bool,
+    pub remember_password: bool,
+    pub remember_passphrase: bool,
+    pub auto_sync: bool,
+}
+
+impl SyncSettings {
+    pub fn validate(&self, webdav: &super::WebDav) -> anyhow::Result<()> {
+        self.gitee.validate()?;
+        if self.auto_sync {
+            ensure!(
+                self.remember_passphrase,
+                "SSH sync: automatic synchronization requires a remembered encryption passphrase"
+            );
+            match self.provider {
+                Provider::Gitee => ensure!(
+                    self.remember_token,
+                    "SSH sync: automatic synchronization requires a remembered Gitee token"
+                ),
+                Provider::WebDav => {
+                    webdav.endpoint()?;
+                    ensure!(
+                        self.remember_password,
+                        "SSH sync: automatic synchronization requires a remembered WebDAV password"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }

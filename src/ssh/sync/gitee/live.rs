@@ -17,9 +17,9 @@ use crate::ssh::{
 };
 
 #[derive(Default)]
-struct NativeCredentials(RefCell<Vec<Host>>);
+struct AppCredentials(RefCell<Vec<Host>>);
 
-impl Store for NativeCredentials {
+impl Store for AppCredentials {
     fn load(&self, host: &Host) -> anyhow::Result<Option<Zeroizing<String>>> {
         auth::load(host)
     }
@@ -35,7 +35,7 @@ impl Store for NativeCredentials {
     }
 }
 
-impl NativeCredentials {
+impl AppCredentials {
     fn cleanup(&mut self) -> anyhow::Result<()> {
         while let Some(host) = self.0.get_mut().last() {
             auth::forget(host)?;
@@ -45,7 +45,7 @@ impl NativeCredentials {
     }
 }
 
-impl Drop for NativeCredentials {
+impl Drop for AppCredentials {
     fn drop(&mut self) {
         if let Err(error) = self.cleanup() {
             eprintln!("Gitee live test: cannot remove a temporary fixture credential: {error}");
@@ -172,7 +172,7 @@ fn saved_token_round_trips_private_keys_credentials_and_concurrent_snapshots() -
     vault.upload(&merged, &passphrase)?;
     fs::remove_file(&identity)?;
 
-    let mut destination = NativeCredentials::default();
+    let mut destination = AppCredentials::default();
     let restored = synchronize_with(
         Request {
             settings: WebDav::default(),
@@ -229,7 +229,7 @@ fn saved_token_round_trips_private_keys_credentials_and_concurrent_snapshots() -
     ensure!(
         destination.load(password)?.as_deref().map(String::as_str)
             == Some("temporary live test SSH password"),
-        "Gitee live test: native SSH password restoration differs"
+        "Gitee live test: application vault SSH password restoration differs"
     );
     ensure!(
         auth::import(host, "conflicting test fixture").is_err(),

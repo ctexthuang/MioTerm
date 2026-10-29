@@ -17,16 +17,75 @@ fn main() {
     if let Some(code) = auth::askpass::run() {
         std::process::exit(code);
     }
-    if !std::env::args().any(|arg| arg == "--ignored") {
-        println!("ssh_auth: skipped; --ignored opts into one temporary OS credential");
+    if let Ok(writer) = std::env::var("MIO_VAULT_TEST_WRITER") {
+        let writer: usize = writer.parse().unwrap();
+        for index in 0..8 {
+            auth::save(&writer_host(writer, index), "fixture concurrent password").unwrap();
+        }
+        return;
+    }
+    if std::env::var_os("MIO_AUTH_TEST_CHILD").is_none() {
+        let folder = std::env::temp_dir().join(format!(
+            "mioterm-askpass-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&folder).unwrap();
+        let status = Command::new(std::env::current_exe().unwrap())
+            .env("MIO_AUTH_TEST_CHILD", "1")
+            .env("MIOTERM_CONFIG_DIR", &folder)
+            .env("HOME", &folder)
+            .env("XDG_CONFIG_HOME", &folder)
+            .env("APPDATA", &folder)
+            .status()
+            .unwrap();
+        std::fs::remove_dir_all(folder).unwrap();
+        assert!(status.success(), "isolated application vault helper failed");
         return;
     }
     saved_password_uses_the_real_helper_without_exposing_it_in_the_profile();
+    independent_processes_preserve_each_others_credentials();
     #[cfg(unix)]
     if std::env::var_os("ELY_SSH_TEST_IDENTITY").is_some() {
         encrypted_private_key_logs_in_without_an_agent_or_control_socket();
     }
-    println!("ssh_auth: system credential and askpass round-trip passed");
+    println!("ssh_auth: application vault and actual askpass helper round-trip passed");
+}
+
+fn writer_host(writer: usize, index: usize) -> Host {
+    Host {
+        address: format!("writer-{writer}-{index}.fixture.invalid"),
+        auth: Authentication::Password,
+        remember_secret: true,
+        ..Host::default()
+    }
+}
+
+fn independent_processes_preserve_each_others_credentials() {
+    let mut writers = (0..4)
+        .map(|writer| {
+            Command::new(std::env::current_exe().unwrap())
+                .env("MIO_VAULT_TEST_WRITER", writer.to_string())
+                .spawn()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for writer in &mut writers {
+        assert!(writer.wait().unwrap().success());
+    }
+    for writer in 0..4 {
+        for index in 0..8 {
+            let host = writer_host(writer, index);
+            assert_eq!(
+                auth::load(&host).unwrap().unwrap().as_str(),
+                "fixture concurrent password"
+            );
+            auth::forget(&host).unwrap();
+        }
+    }
 }
 
 #[cfg(unix)]

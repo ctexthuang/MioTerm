@@ -160,6 +160,20 @@ fn encryption_passphrases_require_at_least_six_characters() {
 }
 
 #[test]
+fn empty_encryption_passphrases_ask_for_input_instead_of_reporting_a_length_error() {
+    let error = crypto::validate_passphrase(&SecretString::from(String::new())).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "SSH sync: enter the encryption passphrase or enable remembrance and save it first"
+    );
+    let error = crypto::validate_passphrase(&SecretString::from("12345".to_string())).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "SSH sync: the encryption passphrase must have at least 6 characters"
+    );
+}
+
+#[test]
 fn the_encrypted_bundle_round_trips_and_rejects_wrong_passwords_and_tampering() {
     let folder = Folder::new();
     let archive = Archive::capture(&folder.local("secret-key")).unwrap();

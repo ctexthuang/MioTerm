@@ -44,7 +44,7 @@ fn current_sid() -> anyhow::Result<String> {
     let mut token = ptr::null_mut();
     checked(
         unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) },
-        "SSH sync: cannot read the Windows access token",
+        "SSH storage: cannot read the Windows access token",
     )?;
     let _token = unsafe { OwnedHandle::from_raw_handle(token) };
     let mut needed = 0;
@@ -53,7 +53,7 @@ fn current_sid() -> anyhow::Result<String> {
     }
     ensure!(
         needed > 0,
-        "SSH sync: Windows returned an empty access token"
+        "SSH storage: Windows returned an empty access token"
     );
     let mut buffer = vec![0usize; (needed as usize).div_ceil(size_of::<usize>())];
     checked(
@@ -66,13 +66,13 @@ fn current_sid() -> anyhow::Result<String> {
                 &mut needed,
             )
         },
-        "SSH sync: cannot read the Windows key owner's SID",
+        "SSH storage: cannot read the Windows owner's SID",
     )?;
     let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
     let mut sid = ptr::null_mut();
     checked(
         unsafe { ConvertSidToStringSidW(user.User.Sid, &mut sid) },
-        "SSH sync: cannot encode the Windows key owner's SID",
+        "SSH storage: cannot encode the Windows owner's SID",
     )?;
     let _sid = LocalBuffer(sid.cast());
     let mut length = 0;
@@ -80,7 +80,7 @@ fn current_sid() -> anyhow::Result<String> {
         length += 1;
     }
     String::from_utf16(unsafe { std::slice::from_raw_parts(sid, length) })
-        .context("SSH sync: Windows returned an invalid owner SID")
+        .context("SSH storage: Windows returned an invalid owner SID")
 }
 
 pub(super) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
@@ -100,7 +100,7 @@ pub(super) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
                 ptr::null_mut(),
             )
         },
-        "SSH sync: cannot build a private Windows key ACL",
+        "SSH storage: cannot build a private Windows ACL",
     )?;
     let _security = LocalBuffer(security);
     let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -114,6 +114,6 @@ pub(super) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
                 security,
             )
         },
-        "SSH sync: cannot restrict the restored key to the current Windows user",
+        "SSH storage: cannot restrict the private path to the current Windows user",
     )
 }

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     Connections, Host,
-    credentials::{Credential, Store},
+    credentials::{Credential, MissingPasswords, Store},
     keys::Key,
 };
 
@@ -201,6 +201,7 @@ impl Archive {
         local: &Connections,
         store: &impl Store,
     ) -> anyhow::Result<()> {
+        let mut missing = Vec::new();
         for host in &local.hosts {
             if host.remember_secret && host.auth.has_secret() {
                 match store.load(host)? {
@@ -210,12 +211,15 @@ impl Archive {
                             Credential(secret.to_string()),
                         );
                     }
-                    None => ensure!(
-                        host.auth != crate::ssh::Authentication::Password,
-                        "SSH sync: a remembered SSH password is missing from the system credential store"
-                    ),
+                    None if host.auth == crate::ssh::Authentication::Password => {
+                        missing.push(format!("{:?}", host.label()));
+                    }
+                    None => {}
                 }
             }
+        }
+        if !missing.is_empty() {
+            return Err(MissingPasswords(missing).into());
         }
         self.validate()
     }

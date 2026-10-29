@@ -8,6 +8,10 @@ use super::{LIMIT, archive::Archive};
 
 pub(super) fn validate_passphrase(passphrase: &SecretString) -> anyhow::Result<()> {
     ensure!(
+        !passphrase.expose_secret().is_empty(),
+        "SSH sync: enter the encryption passphrase or enable remembrance and save it first"
+    );
+    ensure!(
         passphrase.expose_secret().chars().count() >= 6,
         "SSH sync: the encryption passphrase must have at least 6 characters"
     );

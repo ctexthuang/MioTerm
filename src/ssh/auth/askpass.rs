@@ -34,13 +34,8 @@ fn answer(account: &str) -> anyhow::Result<()> {
     let hint = std::env::var("SSH_ASKPASS_PROMPT").unwrap_or_default();
     let kind = std::env::var("ELY_SSH_ASKPASS_KIND").unwrap_or_default();
     let answer = if accepts(&kind, &prompt, &hint) {
-        let entry = keyring::Entry::new("com.zacharyzhang.elyterminal.ssh", account)
-            .context("ssh: cannot open saved credential")?;
-        zeroize::Zeroizing::new(
-            entry
-                .get_password()
-                .context("ssh: saved credential unavailable; edit the host on this computer")?,
-        )
+        super::load_account(account)?
+            .context("ssh: saved credential unavailable; edit the host or import system credentials in Settings > Sync")?
     } else {
         let confirm = hint == "confirm"
             || prompt.contains("Are you sure you want to continue connecting")

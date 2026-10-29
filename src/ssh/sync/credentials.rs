@@ -2,7 +2,22 @@ use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::ssh::{Host, auth};
+use crate::ssh::{Host, auth, vault::Vault};
+
+#[derive(Debug)]
+pub(super) struct MissingPasswords(pub Vec<String>);
+
+impl std::fmt::Display for MissingPasswords {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "SSH sync: no saved password in the application vault for {}. Import system credentials or edit the host to re-enter it. If the password is already in the cloud archive, use Restore. Automatic retries wait for a local change or manual retry.",
+            self.0.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for MissingPasswords {}
 
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -29,9 +44,9 @@ pub(super) trait Store {
     fn insert(&self, host: &Host, secret: &str) -> anyhow::Result<()>;
 }
 
-pub(super) struct SystemStore;
+pub(super) struct VaultStore;
 
-impl Store for SystemStore {
+impl Store for VaultStore {
     fn load(&self, host: &Host) -> anyhow::Result<Option<Zeroizing<String>>> {
         auth::load(host)
     }
@@ -41,34 +56,9 @@ impl Store for SystemStore {
     }
 }
 
-fn token_entry() -> anyhow::Result<keyring::Entry> {
-    keyring::Entry::new("io.github.ctexthuang.mioterm.sync", "gitee")
-        .context("Gitee sync: cannot open the system credential store")
-}
-
 pub(super) fn token() -> anyhow::Result<Zeroizing<String>> {
-    token_entry()?
-        .get_password()
-        .map(Zeroizing::new)
-        .context("Gitee sync: cannot read a saved token; enter it again")
-}
-
-pub(super) fn save_token(value: &str, remember: bool) -> anyhow::Result<()> {
-    let entry = token_entry()?;
-    if remember {
-        if !value.is_empty() {
-            validate_token(value)?;
-            entry
-                .set_password(value)
-                .context("Gitee sync: cannot save the token")?;
-        }
-    } else {
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(error) => return Err(error).context("Gitee sync: cannot remove the saved token"),
-        }
-    }
-    Ok(())
+    Vault::open()?.get("sync:gitee")?
+        .context("Gitee sync: no saved token in the application vault; enter it or import system credentials")
 }
 
 pub(super) fn validate_token(value: &str) -> anyhow::Result<()> {

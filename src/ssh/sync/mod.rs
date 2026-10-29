@@ -20,6 +20,8 @@ pub use config::{Gitee, Provider, SyncSettings};
 mod flow_tests;
 mod keys;
 pub mod page;
+mod saved;
+pub mod service;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -126,7 +128,7 @@ pub fn run(request: Request) -> anyhow::Result<Restored> {
     } else {
         Remote::WebDav(webdav::Client::new(&request.settings, &request.password)?)
     };
-    synchronize_with(request, remote, &credentials::SystemStore)
+    synchronize_with(request, remote, &credentials::VaultStore)
 }
 
 enum Remote {
@@ -136,7 +138,7 @@ enum Remote {
 
 #[cfg(test)]
 fn synchronize(request: Request, remote: webdav::Client) -> anyhow::Result<Restored> {
-    synchronize_with(request, Remote::WebDav(remote), &credentials::SystemStore)
+    synchronize_with(request, Remote::WebDav(remote), &credentials::VaultStore)
 }
 
 fn synchronize_with(
@@ -144,6 +146,15 @@ fn synchronize_with(
     remote: Remote,
     store: &impl credentials::Store,
 ) -> anyhow::Result<Restored> {
+    let local = if request.restore_only {
+        None
+    } else {
+        let mut local = Archive::capture(&request.local)?;
+        if request.include_credentials {
+            local.capture_credentials(&request.local, store)?;
+        }
+        Some(local)
+    };
     let mut etag = None;
     let found = match &remote {
         Remote::WebDav(client) => client
@@ -162,11 +173,7 @@ fn synchronize_with(
         }
         None => Archive::default(),
     };
-    if !request.restore_only {
-        let mut local = Archive::capture(&request.local)?;
-        if request.include_credentials {
-            local.capture_credentials(&request.local, store)?;
-        }
+    if let Some(local) = local {
         archive.merge(local)?;
         let encrypted = crypto::encrypt(&archive, &request.passphrase)?;
         match &remote {

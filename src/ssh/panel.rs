@@ -120,6 +120,9 @@ impl HostPanel {
                 });
                 match host {
                     Ok(host) => {
+                        if !quick {
+                            super::sync::service::changed(cx);
+                        }
                         log::info!(
                             "ssh: {} {}",
                             if connect { "opening" } else { "saved" },

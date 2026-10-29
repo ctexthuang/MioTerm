@@ -1,3 +1,4 @@
+mod folder;
 mod store;
 pub mod window;
 
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::themes;
 
+pub(crate) use folder::folder;
 pub use store::{SettingsStore, load, save};
 
 /// Where a new session starts.
@@ -144,7 +146,7 @@ impl Settings {
     /// Every value inside its range, every theme built in; the error names the field.
     pub fn validate(&self) -> anyhow::Result<()> {
         self.webdav.validate()?;
-        self.sync.gitee.validate()?;
+        self.sync.validate(&self.webdav)?;
         within("font_size", self.font_size, &FONT_SIZE)?;
         within("line_height", self.line_height, &LINE_HEIGHT)?;
         within("background_opacity", self.background_opacity, &OPACITY)?;

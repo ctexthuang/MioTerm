@@ -9,12 +9,14 @@ pub mod auth;
 pub mod control;
 pub mod files;
 pub mod panel;
+mod private;
 pub mod remote;
 pub mod shell;
 mod store;
 pub mod sync;
 #[cfg(test)]
 mod tests;
+pub(crate) mod vault;
 
 pub use auth::Authentication;
 pub use store::HostStore;

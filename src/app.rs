@@ -51,6 +51,7 @@ pub fn start(cx: &mut App) -> anyhow::Result<()> {
     })?;
     log::info!("app: side panels start collapsed");
     crate::ssh::HostStore::init(cx)?;
+    crate::ssh::sync::service::start(cx);
     updates::start(cx);
     ShellIntegration::init(cx)?;
     input::bind_keys(cx);

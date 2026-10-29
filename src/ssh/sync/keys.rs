@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
-#[cfg(windows)]
-mod windows;
+use crate::ssh::private::{folder as secure_folder, protect, regular};
 
 const KEY_LIMIT: usize = 65536;
 
@@ -167,58 +166,6 @@ fn read(path: &Path) -> anyhow::Result<Zeroizing<Vec<u8>>> {
     Ok(bytes)
 }
 
-fn regular(path: &Path, folder: bool) -> anyhow::Result<()> {
-    let metadata =
-        fs::symlink_metadata(path).context("SSH sync: cannot inspect managed key path")?;
-    ensure!(
-        !metadata.file_type().is_symlink()
-            && if folder {
-                metadata.is_dir()
-            } else {
-                metadata.is_file()
-            },
-        "SSH sync: managed key path is a symlink or has the wrong type"
-    );
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        ensure!(
-            metadata.file_attributes() & 0x400 == 0,
-            "SSH sync: managed key path is a reparse point"
-        );
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        ensure!(
-            metadata.uid() == unsafe { libc::geteuid() },
-            "SSH sync: managed key path has another owner"
-        );
-    }
-    Ok(())
-}
-
-fn secure_folder(path: &Path) -> anyhow::Result<()> {
-    if !path
-        .try_exists()
-        .context("SSH sync: cannot inspect managed key folder")?
-    {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(path)
-                .context("SSH sync: cannot create private key folder")?;
-        }
-        #[cfg(not(unix))]
-        fs::create_dir_all(path).context("SSH sync: cannot create private key folder")?;
-    }
-    regular(path, true)?;
-    protect(path, true)
-}
-
 fn write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     if path
         .try_exists()
@@ -255,19 +202,4 @@ fn write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         }
     }
     saved
-}
-
-#[cfg(unix)]
-fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(
-        path,
-        fs::Permissions::from_mode(if folder { 0o700 } else { 0o600 }),
-    )
-    .context("SSH sync: cannot restrict restored key permissions")
-}
-
-#[cfg(windows)]
-fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
-    windows::protect(path, folder)
 }

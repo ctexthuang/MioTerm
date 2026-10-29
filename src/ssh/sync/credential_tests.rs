@@ -51,9 +51,13 @@ fn settings_keep_webdav_and_never_serialize_tokens_or_encryption_passwords() {
     assert_eq!(saved.sync.provider, Provider::WebDav);
     assert!(!saved.sync.include_credentials);
     assert!(!saved.sync.remember_token);
+    assert!(!saved.sync.remember_password);
+    assert!(!saved.sync.remember_passphrase);
+    assert!(!saved.sync.auto_sync);
     assert_eq!(saved.webdav.username, "alice");
     let text = serde_json::to_string(&saved.sync).unwrap();
-    assert!(!text.contains("password") && !text.contains("passphrase"));
+    let fields: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(fields.get("password").is_none() && fields.get("passphrase").is_none());
     for field in ["token", "password", "passphrase"] {
         assert!(
             serde_json::from_value::<SyncSettings>(serde_json::json!({field: "not allowed"}))
@@ -89,7 +93,7 @@ fn settings_keep_webdav_and_never_serialize_tokens_or_encryption_passwords() {
 }
 
 #[test]
-fn passwords_require_opt_in_and_restore_to_the_system_store_not_connection_files() {
+fn passwords_require_opt_in_and_restore_to_the_credential_store_not_connection_files() {
     let local = password_host();
     let source = MemoryStore::default();
     source
@@ -134,11 +138,83 @@ fn passwords_require_opt_in_and_restore_to_the_system_store_not_connection_files
 }
 
 #[test]
+fn cloud_archive_restores_key_bytes_and_passwords_into_an_independent_device_vault() {
+    use crate::ssh::vault::Vault;
+    struct Files(Vault);
+    impl Store for Files {
+        fn load(&self, host: &Host) -> anyhow::Result<Option<Zeroizing<String>>> {
+            self.0.get(&format!("ssh:{}", auth::account(host)))
+        }
+        fn insert(&self, host: &Host, secret: &str) -> anyhow::Result<()> {
+            self.0
+                .insert(&format!("ssh:{}", auth::account(host)), secret)
+        }
+    }
+    let folder = tests::Folder::new();
+    let identity = folder.0.join("original-macos-key");
+    std::fs::write(&identity, "-----BEGIN OPENSSH PRIVATE KEY-----\nSYNTHETIC FIXTURE\n-----END OPENSSH PRIVATE KEY-----\n").unwrap();
+    let mut local = password_host();
+    local
+        .upsert(Host {
+            address: "key-fixture.example".into(),
+            auth: Authentication::PrivateKey,
+            identity: identity.display().to_string(),
+            remember_secret: true,
+            ..Host::default()
+        })
+        .unwrap();
+    let source = Files(Vault::at(folder.0.join("source-app-data")));
+    source.insert(&local.hosts[0], "fixture-password").unwrap();
+    source
+        .insert(&local.hosts[1], "fixture-key-passphrase")
+        .unwrap();
+    let mut archive = Archive::capture(&local).unwrap();
+    archive.capture_credentials(&local, &source).unwrap();
+    let plain = serde_json::to_string(&archive).unwrap();
+    assert!(!plain.contains(&identity.display().to_string()));
+    assert!(!plain.contains("local.key") && !plain.contains("sync:gitee"));
+    let phrase = SecretString::from("635841".to_owned());
+    let bytes = crypto::encrypt(&archive, &phrase).unwrap();
+    std::fs::remove_file(&identity).unwrap();
+    let received = crypto::decrypt(&bytes, &phrase).unwrap();
+    let key_folder = folder.0.join("destination-home/.ssh/elyterminal-sync");
+    let mut restored = received
+        .restore(Connections::default(), &key_folder)
+        .unwrap();
+    let destination = Files(Vault::at(folder.0.join("destination-app-data")));
+    assert_eq!(
+        received
+            .restore_credentials(&mut restored, &destination)
+            .unwrap(),
+        2
+    );
+    for host in &restored.hosts {
+        let expected = if host.auth == Authentication::PrivateKey {
+            "fixture-key-passphrase"
+        } else {
+            "fixture-password"
+        };
+        assert_eq!(destination.load(host).unwrap().unwrap().as_str(), expected);
+        assert!(host.remember_secret);
+        if host.auth == Authentication::PrivateKey {
+            assert!(std::path::Path::new(&host.identity).starts_with(&key_folder));
+            assert!(std::path::Path::new(&host.identity).is_file());
+        }
+    }
+    assert_ne!(
+        std::fs::read(folder.0.join("source-app-data/local.key")).unwrap(),
+        std::fs::read(folder.0.join("destination-app-data/local.key")).unwrap()
+    );
+}
+
+#[test]
 fn missing_passwords_invalid_records_and_conflicting_credentials_fail_without_overwriting() {
     let local = password_host();
     let store = MemoryStore::default();
     let mut archive = Archive::capture(&local).unwrap();
-    assert!(archive.capture_credentials(&local, &store).is_err());
+    let error = archive.capture_credentials(&local, &store).unwrap_err();
+    assert!(error.is::<credentials::MissingPasswords>());
+    assert!(error.to_string().contains("credential-fixture.example"));
     store.insert(&local.hosts[0], "first fixture").unwrap();
     archive.capture_credentials(&local, &store).unwrap();
     let different = MemoryStore::default();
@@ -167,6 +243,37 @@ fn missing_passwords_invalid_records_and_conflicting_credentials_fail_without_ov
     for invalid in ["", "line\n", "\0"] {
         assert!(credentials::Credential(invalid.into()).validate().is_err());
     }
+}
+
+#[test]
+fn missing_password_is_reported_before_contacting_the_provider() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let client = webdav::Client::at(
+        &format!("http://{}/archive", listener.local_addr().unwrap()),
+        "fixture",
+        &SecretString::from("fixture-token".to_owned()),
+    )
+    .unwrap();
+    let request = Request {
+        settings: WebDav::default(),
+        gitee: None,
+        include_credentials: true,
+        remember_token: false,
+        password: SecretString::from("fixture-token".to_owned()),
+        passphrase: SecretString::from("635841".to_owned()),
+        local: password_host(),
+        key_folder: std::env::temp_dir(),
+        restore_only: false,
+    };
+    let error = synchronize_with(request, Remote::WebDav(client), &MemoryStore::default())
+        .err()
+        .expect("missing password must fail");
+    assert!(error.is::<credentials::MissingPasswords>());
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
 }
 
 #[test]

@@ -1,9 +1,13 @@
 use age::secrecy::{ExposeSecret, SecretString};
-use anyhow::{Context as _, ensure};
+use anyhow::ensure;
 use ely_gpui_component::{forms::TextInput, primitives::Severity};
 use gpui::{App, AppContext, Context, Entity, Subscription, Window};
 
-use super::{Gitee, Provider, Request, SyncSettings, WebDav, credentials, crypto};
+use super::{
+    Gitee, Provider, SyncSettings, WebDav, crypto,
+    saved::{Profile, Secrets},
+    service::{self, Operation, SyncService},
+};
 use crate::{settings::SettingsStore, ssh::HostStore};
 
 mod view;
@@ -19,9 +23,12 @@ pub struct SyncPage {
     confirmation: Entity<TextInput>,
     include_credentials: bool,
     remember_token: bool,
-    busy: bool,
+    remember_password: bool,
+    remember_passphrase: bool,
+    auto_sync: bool,
     status: Option<(Severity, String)>,
     _hosts: Subscription,
+    _service: Subscription,
 }
 
 impl SyncPage {
@@ -48,7 +55,12 @@ impl SyncPage {
                 false,
             ),
             username: field("WebDAV username", "Username", saved.webdav.username, false),
-            password: field("WebDAV password", "Not saved", String::new(), true),
+            password: field(
+                "WebDAV password",
+                "Enter or use remembered password",
+                String::new(),
+                true,
+            ),
             vault: field("Gitee vault", "main", saved.sync.gitee.vault, false),
             token: field(
                 "Gitee token",
@@ -58,142 +70,86 @@ impl SyncPage {
             ),
             passphrase: field(
                 "Encryption passphrase",
-                "At least 6 characters",
+                if saved.sync.remember_passphrase {
+                    "Saved; leave blank to reuse"
+                } else {
+                    "At least 6 characters"
+                },
                 String::new(),
                 true,
             ),
             confirmation: field(
                 "Confirm passphrase",
-                "Required for sync",
+                "Confirm a new passphrase",
                 String::new(),
                 true,
             ),
             include_credentials: saved.sync.include_credentials,
             remember_token: saved.sync.remember_token,
-            busy: false,
+            remember_password: saved.sync.remember_password,
+            remember_passphrase: saved.sync.remember_passphrase,
+            auto_sync: saved.sync.auto_sync,
             status: None,
             _hosts: cx.observe_global::<HostStore>(|_, cx| cx.notify()),
+            _service: cx.observe_global::<SyncService>(|page, cx| {
+                page.status = None;
+                cx.notify();
+            }),
         }
     }
 
-    fn settings(&self, cx: &App) -> (WebDav, SyncSettings) {
-        (
-            WebDav {
+    fn settings(&self, cx: &App) -> Profile {
+        Profile {
+            webdav: WebDav {
                 url: self.url.read(cx).text().trim().into(),
                 username: self.username.read(cx).text().trim().into(),
             },
-            SyncSettings {
+            settings: SyncSettings {
                 provider: self.provider,
                 gitee: Gitee {
                     vault: self.vault.read(cx).text().trim().into(),
                 },
                 include_credentials: self.include_credentials,
                 remember_token: self.remember_token,
+                remember_password: self.remember_password,
+                remember_passphrase: self.remember_passphrase,
+                auto_sync: self.auto_sync,
             },
-        )
+        }
     }
 
-    fn start(&mut self, operation: Option<bool>, cx: &mut Context<Self>) -> anyhow::Result<()> {
-        if self.busy {
-            return Ok(());
-        }
-        let (webdav, settings) = self.settings(cx);
-        webdav.validate()?;
-        settings.gitee.validate()?;
-        let passphrase = SecretString::from(self.passphrase.read(cx).text().to_owned());
-        if let Some(restore_only) = operation {
-            if settings.provider == Provider::WebDav {
-                webdav.endpoint()?;
-            }
-            crypto::validate_passphrase(&passphrase)?;
-            if !restore_only {
+    fn start(&mut self, operation: Operation, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let secrets = Secrets {
+            password: SecretString::from(if self.provider == Provider::Gitee {
+                self.token.read(cx).text().to_owned()
+            } else {
+                self.password.read(cx).text().to_owned()
+            }),
+            passphrase: SecretString::from(self.passphrase.read(cx).text().to_owned()),
+        };
+        if !secrets.passphrase.expose_secret().is_empty() {
+            crypto::validate_passphrase(&secrets.passphrase)?;
+            if operation != Operation::Restore {
                 ensure!(
-                    passphrase.expose_secret() == self.confirmation.read(cx).text(),
+                    secrets.passphrase.expose_secret() == self.confirmation.read(cx).text(),
                     "SSH sync: encryption passphrases do not match"
                 );
             }
+        } else if operation != Operation::Save && !self.remember_passphrase {
+            crypto::validate_passphrase(&secrets.passphrase)?;
         }
-        let password = SecretString::from(if settings.provider == Provider::Gitee {
-            self.token.read(cx).text().to_owned()
-        } else {
-            self.password.read(cx).text().to_owned()
-        });
-        if settings.provider == Provider::Gitee && !password.expose_secret().is_empty() {
-            credentials::validate_token(password.expose_secret())?;
+        service::submit(self.settings(cx), secrets, operation, cx)?;
+        if operation != Operation::Save {
+            for input in [
+                &self.password,
+                &self.token,
+                &self.passphrase,
+                &self.confirmation,
+            ] {
+                input.update(cx, |input, cx| input.set_text("", cx));
+            }
         }
-        let forget_token = SettingsStore::get(cx).sync.remember_token && !settings.remember_token;
-        SettingsStore::update(cx, |next| {
-            next.webdav = webdav.clone();
-            next.sync = settings.clone();
-        })?;
-        let key_folder = dirs::home_dir()
-            .context("SSH sync: the platform names no home folder")?
-            .join(".ssh/elyterminal-sync");
-        let request = Request {
-            settings: webdav,
-            gitee: (settings.provider == Provider::Gitee).then_some(settings.gitee),
-            include_credentials: settings.include_credentials,
-            remember_token: settings.remember_token,
-            password,
-            passphrase,
-            local: HostStore::get(cx).clone(),
-            key_folder,
-            restore_only: operation.unwrap_or(false),
-        };
-        for input in [
-            &self.password,
-            &self.token,
-            &self.passphrase,
-            &self.confirmation,
-        ] {
-            input.update(cx, |input, cx| input.set_text("", cx));
-        }
-        self.busy = true;
-        self.status = Some((
-            Severity::Info,
-            match operation {
-                None => "Saving synchronization settings...",
-                Some(true) => "Restoring encrypted SSH archive...",
-                Some(false) => "Synchronizing encrypted SSH archive...",
-            }
-            .into(),
-        ));
-        log::info!(
-            "SSH sync: {:?} operation started; credentials enabled: {}",
-            settings.provider,
-            settings.include_credentials
-        );
-        let work = cx.background_executor().spawn(async move {
-            if forget_token {
-                credentials::save_token("", false)?;
-            } else if request.gitee.is_some() && request.remember_token {
-                credentials::save_token(request.password.expose_secret(), true)?;
-            }
-            if operation.is_none() {
-                return Ok(None);
-            }
-            super::run(request).map(Some)
-        });
-        cx.spawn(async move |page, cx| {
-            let result: anyhow::Result<_> = work.await;
-            let message = cx.update(|cx| {
-                let result = result.and_then(|restored| {
-                    let Some(restored) = restored else { return Ok("Settings saved. Click Sync now to synchronize.".into()); };
-                    let (hosts, keys, credentials) = (restored.hosts, restored.keys, restored.credentials);
-                    HostStore::update(cx, |local| restored.apply(local))?;
-                    Ok(format!("Merged {hosts} hosts, {keys} private keys and {credentials} credentials. Deletions are not propagated."))
-                });
-                match result {
-                    Ok(message) => { log::info!("SSH sync: {message}"); (Severity::Success, message) }
-                    Err(error) => { log::error!("SSH sync: operation failed: {error:#}"); (Severity::Danger, format!("{error:#}")) }
-                }
-            });
-            let _ = page.update(cx, |page, cx| {
-                page.busy = false;
-                page.status = Some(message);
-                cx.notify();
-            });
-        }).detach();
+        self.status = None;
         cx.notify();
         Ok(())
     }
@@ -201,6 +157,14 @@ impl SyncPage {
     fn failed(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
         log::error!("SSH sync: operation refused: {error:#}");
         self.status = Some((Severity::Danger, format!("{error:#}")));
+        cx.notify();
+    }
+
+    fn import_native(&mut self, cx: &mut Context<Self>) {
+        self.status = None;
+        if let Err(error) = service::import_native(cx) {
+            self.failed(error, cx);
+        }
         cx.notify();
     }
 }

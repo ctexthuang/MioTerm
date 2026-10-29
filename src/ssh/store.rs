@@ -19,9 +19,7 @@ impl Global for HostStore {}
 
 impl HostStore {
     pub fn init(cx: &mut App) -> anyhow::Result<()> {
-        let path = dirs::config_dir()
-            .context("ssh: the platform names no config folder")?
-            .join("ELYTerminal/connections.json");
+        let path = crate::settings::folder()?.join("connections.json");
         let data = load(&path)?;
         cx.set_global(Self { data, path });
         Ok(())

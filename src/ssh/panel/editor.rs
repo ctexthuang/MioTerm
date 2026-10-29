@@ -158,7 +158,7 @@ impl Editor {
             let owner = cx.entity();
             dialog = dialog.child(
                 Checkbox::new("ssh-remember", self.remember)
-                    .label("Save credential in system keychain")
+                    .label("Save credential in application vault")
                     .disabled(busy)
                     .on_change(move |remember, _, cx| {
                         owner.update(cx, |panel, cx| {

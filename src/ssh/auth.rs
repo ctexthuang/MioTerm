@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-use super::Host;
+use super::{Host, vault::Vault};
 use crate::term::Launch;
 
 pub mod askpass;
@@ -86,17 +86,14 @@ pub fn account(host: &Host) -> String {
     format!("{:x}", Sha256::digest(fields))
 }
 
-fn entry(host: &Host) -> anyhow::Result<keyring::Entry> {
-    keyring::Entry::new("com.zacharyzhang.elyterminal.ssh", &account(host))
-        .context("ssh: cannot open the system credential store")
+pub fn load(host: &Host) -> anyhow::Result<Option<Zeroizing<String>>> {
+    load_account(&account(host))
 }
 
-pub fn load(host: &Host) -> anyhow::Result<Option<Zeroizing<String>>> {
-    match entry(host)?.get_password() {
-        Ok(secret) => Ok(Some(Zeroizing::new(secret))),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(error).context("ssh: cannot read the system credential store"),
-    }
+pub(super) fn load_account(account: &str) -> anyhow::Result<Option<Zeroizing<String>>> {
+    Vault::open()?
+        .get(&format!("ssh:{account}"))
+        .context("ssh: cannot read the application credential vault")
 }
 
 pub fn forget(host: &Host) -> anyhow::Result<()> {
@@ -107,10 +104,9 @@ pub fn forget(host: &Host) -> anyhow::Result<()> {
 }
 
 fn forget_entry(host: &Host) -> anyhow::Result<()> {
-    match entry(host)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(error).context("ssh: cannot remove the saved credential"),
-    }
+    Vault::open()?
+        .remove(&format!("ssh:{}", account(host)))
+        .context("ssh: cannot remove the saved credential")
 }
 
 pub fn save(host: &Host, secret: &str) -> anyhow::Result<()> {
@@ -123,7 +119,7 @@ pub fn save(host: &Host, secret: &str) -> anyhow::Result<()> {
     if secret.is_empty() {
         ensure!(
             host.auth != Authentication::Password || load(host)?.is_some(),
-            "ssh: enter a password to save in the system credential store"
+            "ssh: enter a password to save in the application vault, or import system credentials in Settings > Sync"
         );
         return Ok(());
     }
@@ -135,11 +131,11 @@ pub fn save(host: &Host, secret: &str) -> anyhow::Result<()> {
         secret.len() <= 1023,
         "ssh: credential exceeds OpenSSH askpass's 1023-byte limit"
     );
-    entry(host)?
-        .set_password(secret)
-        .context("ssh: cannot save to the system credential store")?;
+    Vault::open()?
+        .put(&format!("ssh:{}", account(host)), secret)
+        .context("ssh: cannot save to the application credential vault")?;
     log::info!(
-        "ssh: credential saved in the system store for {}",
+        "ssh: credential saved in the application vault for {}",
         host.destination()
     );
     Ok(())
@@ -160,10 +156,10 @@ pub(super) fn import(host: &Host, secret: &str) -> anyhow::Result<()> {
         !secret.is_empty() && secret.len() <= 1023 && !secret.contains(['\0', '\r', '\n']),
         "SSH sync: invalid credential to restore"
     );
-    entry(host)?
-        .set_password(secret)
-        .context("SSH sync: cannot restore credential to the system store")?;
-    log::info!("SSH sync: credential restored to the system store");
+    Vault::open()?
+        .insert(&format!("ssh:{}", account(host)), secret)
+        .context("SSH sync: cannot restore credential to the application vault")?;
+    log::info!("SSH sync: credential restored to the application vault");
     Ok(())
 }
 
