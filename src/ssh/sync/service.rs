@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, ensure};
+use anyhow::ensure;
 use ely_gpui_component::primitives::Severity;
 use gpui::{App, Global};
 
@@ -229,9 +229,7 @@ fn launch(
                 password: secrets.password,
                 passphrase: secrets.passphrase,
                 local: HostStore::get(cx).clone(),
-                key_folder: dirs::home_dir()
-                    .context("SSH sync: the platform names no home folder")?
-                    .join(".ssh/elyterminal-sync"),
+                key_folder: crate::ssh::keys::folder()?,
                 restore_only: operation == Operation::Restore,
             }))
         });

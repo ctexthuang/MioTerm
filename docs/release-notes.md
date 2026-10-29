@@ -1,4 +1,4 @@
-# MioTerm 0.0.6
+# MioTerm 0.0.8
 
 MioTerm is an independent fork of ELYTerminal, extended with SSH hosts,
 SFTP transfers, remote Git, system monitoring and encrypted Gitee/WebDAV sync.
@@ -8,41 +8,44 @@ Upstream: https://github.com/ELY-Open-Source/ELYTerminal
 The upstream copyright and MIT license are retained. Bundled license
 files are included with each package. This is not an upstream release.
 
-## New In 0.0.6
+## New In 0.0.8
 
-- SSH passwords, private-key passphrases and remembered sync secrets now use an
-  application-owned encrypted file vault on macOS, Windows and Linux. No SQLite
-  dependency was added. Normal operations no longer require a system keychain.
-- Import system credentials explicitly migrates older SSH credentials and saved
-  Gitee tokens. Original system entries are retained; conflicts are not overwritten.
-  The result identifies credentials that are still missing.
-- Encryption passphrases of exactly six characters can be remembered and reused
-  after restart. Save retains typed secrets instead of clearing unsaved input.
-- Optional automatic sync runs at startup and after saved host, group or credential
-  changes, with a two-second debounce and one shared manual/automatic worker.
-- Missing remembered SSH passwords identify affected hosts, offer a direct import
-  action and stop before contacting the provider. They wait for a local change or
-  manual retry instead of repeatedly retrying on a timer. Restore can recover a
-  password already present in the encrypted cloud archive.
-- An absolute MIOTERM_CONFIG_DIR selects the application data folder on all three
-  platforms, including the child-process SSH askpass helper.
+- Private-key hosts now import selected PEM or OpenSSH identities into the
+  application data directory's keys folder on Save or Quick Connect. A native
+  file picker is available beside the private-key field. Original files are
+  never modified; after saving, moving or removing them does not break the host.
+- Repeated imports reuse content-addressed copies and include adjacent OpenSSH
+  certificates. The same private key retains its remembered passphrase when its
+  path changes; a different key does not inherit the previous passphrase.
+  Conflicting saved credentials are not overwritten during migration.
+- Cloud archives contain actual base64 key contents inside the encrypted JSON,
+  not source-machine paths or separately uploaded PEM files. Restoring on another
+  platform installs keys in that machine's application directory and updates
+  the host paths. Edit and save older external-path hosts once to import them.
+- Key installs are locked across concurrent imports/restores and use flushed
+  temporary files before atomic installation. Interrupted imports can be retried.
+  Existing different keys, symlinks and unsafe managed paths are not overwritten.
+- Host deletion persists the connection list before removing unused credentials,
+  preserving credentials referenced by other saved hosts or recent connections.
+  Deletion now notifies automatic synchronization. Saving a host also notifies
+  synchronization even if subsequent unused-credential cleanup fails.
+- An in-progress save cannot be dismissed or replaced by another host editor.
+  Matching recent connections follow imported key paths without rewriting past
+  history for a different destination.
 
-The local vault stores credentials.age beside a randomly generated local.key.
-Unix permissions and Windows current-user ACLs restrict access, but possession of
-both files permits decryption. This is not a master-password vault. Cloud archives
-use the separate user passphrase and never include the local key or sync tokens.
+Managed keys remain ordinary OpenSSH identity files, preserving their original
+key encryption format. They are protected by Unix 0700/0600 permissions or
+Windows current-user ACLs, not by an additional local vault encryption layer.
+Passwords and key passphrases remain in the encrypted application credential
+vault. Cloud archives use the separate synchronization passphrase.
 
-For macOS-to-Windows migration, first include SSH credentials when syncing from
-the source. Configure the same provider account, vault and encryption passphrase
-on Windows, enable credential inclusion and use Restore. Actual key contents and
-passwords are restored using Windows-local paths and fresh local vault encryption.
-
-Local regression tests cover restart persistence, concurrent file writers, the
-actual child-process askpass helper, atomic import conflicts, missing-credential
-preflight and read-only password restoration from a loopback cloud archive.
-Native macOS UI checks verified Save/reuse and the missing-password import action.
-Live authenticated Gitee testing was not rerun for this version, and the new native
-Windows/Linux user workflows have not been manually verified.
+Regression coverage includes RSA PEM import, removal of the source, certificate
+preservation, encrypted JSON restoration, passphrase migration/conflicts,
+concurrent imports and interrupted writes. A loopback SSH/SFTP fixture exercises
+real encrypted PEM authentication and upload after deleting the original key,
+with SSH agents and connection reuse disabled. Live authenticated Gitee testing
+was not rerun for this version. Native Windows/Linux workflows have not been
+manually verified; automated platform checks run in the Release workflow.
 
 ## Packages
 

@@ -5,7 +5,7 @@ use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use super::{Connections, Host};
+use super::{Connections, Host, keys};
 use archive::Archive;
 
 mod archive;
@@ -15,10 +15,11 @@ mod credential_tests;
 mod credentials;
 mod crypto;
 mod gitee;
+#[cfg(test)]
+mod key_tests;
 pub use config::{Gitee, Provider, SyncSettings};
 #[cfg(test)]
 mod flow_tests;
-mod keys;
 pub mod page;
 mod saved;
 pub mod service;

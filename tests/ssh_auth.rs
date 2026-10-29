@@ -5,6 +5,9 @@ use std::{
 
 use elyterminal::ssh::{Authentication, Host, auth};
 
+#[path = "ssh_auth/import.rs"]
+mod key_import;
+
 struct Fixture(Host);
 
 impl Drop for Fixture {
@@ -48,6 +51,7 @@ fn main() {
     }
     saved_password_uses_the_real_helper_without_exposing_it_in_the_profile();
     independent_processes_preserve_each_others_credentials();
+    key_import::run();
     #[cfg(unix)]
     if std::env::var_os("ELY_SSH_TEST_IDENTITY").is_some() {
         encrypted_private_key_logs_in_without_an_agent_or_control_socket();
@@ -106,22 +110,26 @@ fn encrypted_private_key_logs_in_without_an_agent_or_control_socket() {
     let passphrase = "temporary fixture key passphrase";
     assert!(
         Command::new("ssh-keygen")
-            .args(["-q", "-p", "-P", "", "-N", passphrase, "-f"])
+            .args(["-q", "-p", "-m", "PEM", "-P", "", "-N", passphrase, "-f"])
             .arg(&identity)
             .output()
             .unwrap()
             .status
             .success()
     );
-    let fixture = Fixture(Host {
+    let original = Host {
         port: std::env::var("ELY_SSH_TEST_PORT").unwrap().parse().unwrap(),
         user: std::env::var("USER").unwrap(),
         auth: Authentication::PrivateKey,
         identity: identity.display().to_string(),
         remember_secret: true,
         ..Host::default()
-    });
-    auth::save(&fixture.0, passphrase).unwrap();
+    };
+    auth::save(&original, passphrase).unwrap();
+    let fixture = Fixture(original.clone().prepare(&original, "").unwrap());
+    assert_ne!(fixture.0.identity, original.identity);
+    fs::remove_file(&identity).unwrap();
+    auth::forget(&original).unwrap();
     let known = std::env::var_os("ELY_SSH_TEST_KNOWN_HOSTS").unwrap();
     let isolate = |source: Command| {
         let mut command = Command::new(source.get_program());

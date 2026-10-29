@@ -133,6 +133,89 @@ fn profiles_are_edited_by_id_and_deleted_ids_are_not_reused() {
 }
 
 #[test]
+fn importing_a_saved_hosts_key_updates_only_its_matching_recent_connection() {
+    let mut data = Connections::default();
+    let saved = data.upsert(host()).unwrap();
+    data.opened(saved.clone(), 1);
+    data.opened(
+        Host {
+            address: "other.example".into(),
+            ..saved.clone()
+        },
+        2,
+    );
+    let mut imported = saved.clone();
+    imported.identity = std::env::temp_dir()
+        .join("managed-key")
+        .display()
+        .to_string();
+    imported.auth = Authentication::PrivateKey;
+    data.upsert(imported.clone()).unwrap();
+    assert_eq!(data.recent[1].host, imported);
+    assert_eq!(data.recent[0].host.address, "other.example");
+    assert!(data.recent[0].host.identity.is_empty());
+    let history = data.recent.clone();
+    data.upsert(Host {
+        address: "new-target.example".into(),
+        ..imported
+    })
+    .unwrap();
+    assert_eq!(data.recent, history);
+}
+
+#[test]
+fn credential_cleanup_checks_remaining_saved_hosts_and_recent_connections() {
+    let mut data = Connections::default();
+    let first = data
+        .upsert(Host {
+            auth: Authentication::Password,
+            remember_secret: true,
+            ..host()
+        })
+        .unwrap();
+    data.opened(first.clone(), 1);
+    let other = data
+        .upsert(Host {
+            id: 0,
+            ..first.clone()
+        })
+        .unwrap();
+    assert_eq!(data.remove(first.id).unwrap(), first);
+    assert!(data.recent.is_empty());
+    assert!(data.credential_in_use(&first));
+    data.opened(
+        Host {
+            id: 0,
+            ..other.clone()
+        },
+        2,
+    );
+    data.remove(other.id).unwrap();
+    assert!(data.credential_in_use(&first));
+    data.recent[0].host.remember_secret = false;
+    assert!(!data.credential_in_use(&first));
+    let before = data.clone();
+    assert!(data.remove(first.id).is_err());
+    assert_eq!(data, before);
+}
+
+#[test]
+fn failed_connection_save_does_not_commit_a_host_deletion() {
+    let folder = std::env::temp_dir().join(format!("mioterm-delete-save-{}", std::process::id()));
+    let path = folder.join("connections.json");
+    let mut data = Connections::default();
+    let saved = data.upsert(host()).unwrap();
+    store::save(&path, &data).unwrap();
+    let mut next = data.clone();
+    next.remove(saved.id).unwrap();
+    let blocker = folder.join("not-a-directory");
+    std::fs::write(&blocker, "fixture").unwrap();
+    assert!(store::save(&blocker.join("connections.json"), &next).is_err());
+    assert_eq!(store::load(&path).unwrap(), data);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
 fn recent_connections_are_deduplicated_by_target_not_name() {
     let mut data = Connections::default();
     data.opened(host(), 1);

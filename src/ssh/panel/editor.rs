@@ -1,9 +1,14 @@
+use anyhow::Context as _;
 use ely_gpui_component::{
-    buttons::{Button, ButtonVariant},
+    buttons::{Button, ButtonVariant, IconButton},
     forms::{Checkbox, Choice, FormField, Input, PasswordInput, Select, TextInput},
     overlays::Dialog,
+    primitives::IconName,
+    theme::ControlSize,
 };
-use gpui::{App, AppContext, Context, Entity, ParentElement, Styled, Window, div};
+use gpui::{
+    App, AppContext, Context, Entity, ParentElement, PathPromptOptions, Styled, Window, div,
+};
 
 use super::HostPanel;
 use crate::ssh::{Authentication, Host};
@@ -58,7 +63,11 @@ impl Editor {
             port: field("Port", "22", host.port.to_string()),
             user: field("Username", "SSH default", host.user),
             group: field("Group", "Ungrouped", host.group),
-            identity: field("Identity file", "Optional absolute path", host.identity),
+            identity: field(
+                "Private key",
+                "Select a PEM or OpenSSH private key",
+                host.identity,
+            ),
             auth,
             remember: host.remember_secret,
             secret,
@@ -104,6 +113,9 @@ impl Editor {
         let row = |a, b| div().flex().gap_3().child(a).child(b);
         let mut dialog = Dialog::new("ssh-editor", title, move |_, cx| {
             owner.update(cx, |panel, cx| {
+                if panel.saving.is_some() {
+                    return;
+                }
                 panel.editor = None;
                 panel.error = None;
                 cx.notify();
@@ -152,7 +164,21 @@ impl Editor {
             ),
         );
         if self.auth == Authentication::PrivateKey {
-            dialog = dialog.child(field("ssh-identity", "Private key file", &self.identity));
+            let (input, owner) = (self.identity.clone(), cx.entity());
+            dialog = dialog.child(
+                FormField::new("ssh-identity", "Private key").child(
+                    Input::new(&self.identity).suffix(
+                        IconButton::new("ssh-identity-browse", IconName::FolderOpen)
+                            .variant(ButtonVariant::Ghost)
+                            .size(ControlSize::Sm)
+                            .tooltip("Import private key")
+                            .disabled(busy)
+                            .on_click(move |_, window, cx| {
+                                choose_identity(input.clone(), owner.clone(), window, cx);
+                            }),
+                    ),
+                ),
+            );
         }
         if self.auth.has_secret() {
             let owner = cx.entity();
@@ -224,4 +250,65 @@ impl Editor {
                 })
         })
     }
+}
+
+fn choose_identity(
+    input: Entity<TextInput>,
+    owner: Entity<HostPanel>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let chosen = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Import private key".into()),
+    });
+    log::info!("ssh: private key chooser opened");
+    window
+        .spawn(cx, async move |cx| {
+            let result = match chosen.await {
+                Ok(Ok(Some(paths))) => paths
+                    .first()
+                    .and_then(|path| path.to_str())
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("ssh: selected private key path is missing or not UTF-8")
+                    }),
+                Ok(Ok(None)) => {
+                    log::info!("ssh: private key chooser cancelled");
+                    return;
+                }
+                Ok(Err(error)) => Err(error).context("ssh: cannot choose a private key"),
+                Err(_) => Err(anyhow::anyhow!(
+                    "ssh: private key chooser closed without an answer"
+                )),
+            };
+            if let Err(error) = cx.update(|_, cx| {
+                owner.update(cx, |panel, cx| {
+                    if panel
+                        .editor
+                        .as_ref()
+                        .is_none_or(|editor| editor.identity != input)
+                    {
+                        return;
+                    }
+                    match result {
+                        Ok(path) => {
+                            input.update(cx, |input, cx| input.set_text(path, cx));
+                            panel.error = None;
+                            log::info!("ssh: private key selected for import on save");
+                        }
+                        Err(error) => {
+                            log::error!("{error:#}");
+                            panel.error = Some(format!("{error:#}"));
+                        }
+                    }
+                    cx.notify();
+                })
+            }) {
+                log::error!("ssh: private key chooser window closed: {error:#}");
+            }
+        })
+        .detach();
 }

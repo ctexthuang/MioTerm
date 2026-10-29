@@ -62,6 +62,9 @@ impl HostPanel {
     }
 
     pub fn edit(&mut self, host: Host, quick: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving.is_some() {
+            return;
+        }
         log::info!(
             "ssh: {} editor opens for {}",
             if quick { "quick" } else { "host" },
@@ -89,40 +92,52 @@ impl HostPanel {
         };
         let quick = editor.quick;
         let original = editor.original.clone();
-        let shared = HostStore::get(cx).hosts.iter().any(|other| {
-            other.id != original.id
-                && super::auth::account(other) == super::auth::account(&original)
-        });
         let secret = zeroize::Zeroizing::new(editor.secret.read(cx).text().to_string());
-        let save = cx.background_executor().spawn(async move {
-            if host.remember_secret {
-                super::auth::save(&host, &secret)?;
-            }
-            if original.remember_secret
-                && !shared
-                && (!host.remember_secret
-                    || super::auth::account(&original) != super::auth::account(&host))
-            {
-                super::auth::forget(&original)?;
-            }
-            Ok::<_, anyhow::Error>(host)
-        });
+        let before = original.clone();
+        let save = cx
+            .background_executor()
+            .spawn(async move { host.prepare(&before, &secret) });
         self.saving = Some(cx.spawn(async move |this, cx| {
             let host = save.await;
+            let host = match this.update(cx, |_, cx| {
+                host.and_then(|host| {
+                    if quick {
+                        Ok((host, true))
+                    } else {
+                        let host = HostStore::update(cx, |data| data.upsert(host))?;
+                        let shared = HostStore::get(cx).credential_in_use(&original);
+                        super::sync::service::changed(cx);
+                        Ok((host, shared))
+                    }
+                })
+            }) {
+                Ok(host) => host,
+                Err(_) => return,
+            };
+            let host = match host {
+                Ok((host, shared)) => {
+                    cx.background_executor()
+                        .spawn(async move {
+                            if original.remember_secret
+                                && !shared
+                                && (!host.remember_secret
+                                    || super::auth::account(&original)
+                                        != super::auth::account(&host))
+                            {
+                                super::auth::forget(&original).map_err(|error| {
+                                    anyhow::anyhow!("ssh: host saved, but unused credential cleanup failed: {error:#}")
+                                })?;
+                            }
+                            Ok(host)
+                        })
+                        .await
+                }
+                Err(error) => Err(error),
+            };
             let _ = this.update(cx, |panel, cx| {
                 panel.saving = None;
-                let host = host.and_then(|host| {
-                    if quick {
-                        Ok(host)
-                    } else {
-                        HostStore::update(cx, |data| data.upsert(host))
-                    }
-                });
                 match host {
                     Ok(host) => {
-                        if !quick {
-                            super::sync::service::changed(cx);
-                        }
                         log::info!(
                             "ssh: {} {}",
                             if connect { "opening" } else { "saved" },
@@ -221,18 +236,19 @@ impl HostPanel {
         if self.saving.is_some() {
             return;
         }
-        let Some(host) = HostStore::get(cx)
-            .hosts
-            .iter()
-            .find(|host| host.id == id)
-            .cloned()
-        else {
-            return;
+        let host = match HostStore::update(cx, |data| data.remove(id)) {
+            Ok(host) => host,
+            Err(error) => {
+                log::error!("ssh: cannot delete host {id}: {error:#}");
+                self.error = Some(format!("{error:#}"));
+                self.deleting = None;
+                cx.notify();
+                return;
+            }
         };
-        let shared = HostStore::get(cx).hosts.iter().any(|other| {
-            other.id != id && super::auth::account(other) == super::auth::account(&host)
-        });
+        let shared = HostStore::get(cx).credential_in_use(&host);
         self.deleting = None;
+        super::sync::service::changed(cx);
         let remove = cx.background_executor().spawn(async move {
             if host.remember_secret && !shared {
                 super::auth::forget(&host)?;
@@ -243,17 +259,15 @@ impl HostPanel {
             let result = remove.await;
             let _ = this.update(cx, |panel, cx| {
                 panel.saving = None;
-                if let Err(error) = result.and_then(|()| {
-                    HostStore::update(cx, |data| {
-                        data.hosts.retain(|host| host.id != id);
-                        data.recent.retain(|recent| recent.host.id != id);
-                        Ok(())
-                    })
-                }) {
-                    log::error!("ssh: cannot delete host {id}: {error:#}");
-                    panel.error = Some(format!("{error:#}"));
+                if let Err(error) = result {
+                    log::error!(
+                        "ssh: host {id} deleted, but unused credential cleanup failed: {error:#}"
+                    );
+                    panel.error = Some(format!(
+                        "ssh: host deleted, but unused credential cleanup failed: {error:#}"
+                    ));
                 } else {
-                    log::info!("ssh: deleted host {id} and its unshared credential");
+                    log::info!("ssh: deleted host {id}; shared credential retained: {shared}");
                 }
                 cx.notify();
             });

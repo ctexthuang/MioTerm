@@ -173,15 +173,28 @@ not its original absolute path. Unreadable, missing, public-only or unsupported
 identity files stop synchronization rather than producing a path-only backup.
 Adjacent OpenSSH `-cert.pub` certificates are included as well.
 
-On restore, keys are written under `~/.ssh/elyterminal-sync/`, named by a digest
+Saving a private-key host or making a quick connection imports the selected PEM
+or OpenSSH key into `keys/` under the application data directory. The source is
+never changed. After a successful save, moving or deleting the source does not
+affect connections or synchronization. Existing external-path hosts are imported
+when edited and saved again. An unchanged key retains its saved passphrase when
+its local path changes; a different key never inherits the previous passphrase.
+Repeated imports reuse the same content-addressed key and include certificates.
+
+On restore, new keys use the same application `keys/` directory, named by a digest
 of their contents. Imported hosts point to those actual local files. Existing
-matching local keys keep their original paths. Existing files with different
+matching local keys (including older `~/.ssh/elyterminal-sync/` keys) keep their
+paths until explicitly imported again. Existing files with different
 contents are never overwritten. Managed symlinks and Windows reparse points
-are refused.
+are refused. File locks serialize simultaneous imports and restores. Each key is
+flushed to a private temporary file before atomic installation; an interrupted
+temporary import can be retried without exposing an incomplete identity.
 
 The managed directory is mode 0700 and files are mode 0600 on Unix. On Windows,
 protected ACLs grant access only to the current user. Restored keys are ordinary
-SSH identity files, not encrypted local app-vault records. If an original SSH
+SSH identity files, not encrypted local app-vault records. No unencrypted key
+material is placed in connections JSON. Cloud JSON carries base64 key contents,
+not source paths, and is encrypted as a whole before upload. If an original SSH
 key has its own passphrase, it still requires that passphrase after restore.
 
 Implicit keys from ssh_config, default identity paths, SSH agents, hardware
@@ -220,7 +233,12 @@ Unit tests cover encrypted round trips, wrong passphrases, ciphertext tampering,
 key restoration after removal of the source, restrictive permissions, symlink
 refusal, duplicate merging, key digests and concurrent local edits. An OpenSSH
 test generates a temporary passphrase-protected key and checks that the restored
-identity derives the same public key. Loopback HTTP fixtures cover conditional
+identity derives the same public key. RSA PEM coverage includes local import,
+source removal, certificate preservation, encrypted JSON restoration and saved
+passphrase remapping without overwriting conflicting credentials. An optional
+loopback SSH/SFTP fixture verifies real login and transfer with the imported key
+after source removal, with agents and control sockets disabled.
+Loopback HTTP fixtures cover conditional
 GET/PUT flows, HTTP 412, authentication errors, redirects and absent ETags.
 An end-to-end loopback test uploads an encrypted archive, removes the source key,
 and restores the host and actual key into another machine's directory.

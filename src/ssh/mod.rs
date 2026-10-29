@@ -8,7 +8,9 @@ use crate::term::{Launch, Quote};
 pub mod auth;
 pub mod control;
 pub mod files;
+mod keys;
 pub mod panel;
+mod prepare;
 mod private;
 pub mod remote;
 pub mod shell;
@@ -242,6 +244,16 @@ impl Connections {
                 .iter_mut()
                 .find(|saved| saved.id == host.id)
                 .context("ssh: the host being edited no longer exists")?;
+            let same_destination =
+                (&host.address, host.port, &host.user) == (&saved.address, saved.port, &saved.user);
+            for recent in &mut self.recent {
+                if same_destination && recent.host.id == saved.id && recent.host.same_target(saved)
+                {
+                    recent.host.identity = host.identity.clone();
+                    recent.host.auth = host.auth;
+                    recent.host.remember_secret = host.remember_secret;
+                }
+            }
             *saved = host.clone();
         }
         Ok(host)
@@ -251,5 +263,24 @@ impl Connections {
         self.recent.retain(|recent| !recent.host.same_target(&host));
         self.recent.insert(0, Recent { host, opened_at });
         self.recent.truncate(20);
+    }
+
+    fn credential_in_use(&self, host: &Host) -> bool {
+        let account = auth::account(host);
+        self.hosts
+            .iter()
+            .chain(self.recent.iter().map(|recent| &recent.host))
+            .any(|other| other.remember_secret && auth::account(other) == account)
+    }
+
+    fn remove(&mut self, id: u64) -> anyhow::Result<Host> {
+        let index = self
+            .hosts
+            .iter()
+            .position(|host| host.id == id)
+            .context("ssh: the host being deleted no longer exists")?;
+        let host = self.hosts.remove(index);
+        self.recent.retain(|recent| recent.host.id != id);
+        Ok(host)
     }
 }
