@@ -25,6 +25,27 @@ losing access to the archive; there is no password reset or recovery key.
 - Recent connection history, terminal contents, settings and known_hosts are
   not synchronized.
 
+## Local Deletions
+
+Deleting a saved host persists a local exclusion in `connections.json` before
+unused credential cleanup. Sync now, automatic sync and Restore all respect
+these exclusions, so switching pages or restarting cannot reimport that host.
+Excluded private keys are not installed and excluded credentials are not restored.
+Explicitly adding the same host again clears its matching exclusion.
+
+Exclusions contain profile and key fingerprints, never passwords or key bytes.
+They match the name, address, port, user, group, authentication method and key
+contents, not the old key path. Distinct key variants remain independent. If the
+key is unavailable at deletion, matching key-backed variants of that profile
+are excluded rather than making a broken host impossible to delete.
+
+This is local deletion protection, not cloud deletion propagation. Other devices
+and encrypted cloud backups are unchanged; a fresh device can still restore those
+entries. Use the current build on a shared configuration folder: older running
+instances can overwrite newer local deletion records, and older binaries reject
+connection files containing the new records. Do not run old and new builds
+against the same folder at once.
+
 ## Remembered Secrets And Automatic Sync
 
 Enable Remember encryption passphrase to keep the archive passphrase in the
@@ -51,9 +72,9 @@ continues when Settings closes and does not requeue its own imported hosts.
 Local edits made during a request remain pending for the next run. Failed
 automatic operations remain visible in Settings and retry after 30 seconds,
 2 minutes and 10 minutes, then wait for a new edit or a manual request. Missing
-remembered SSH passwords stop before contacting the provider, name the affected
-hosts and wait for a local change or manual retry without timed retries. The
-error provides a direct Import system credentials action.
+remembered SSH passwords or selected private-key files do not block other hosts.
+These partial successes name the affected hosts in a warning and do not schedule
+failure retries. New local edits still trigger synchronization normally.
 Disabling automatic sync stops queued runs, not a request already in progress.
 Existing additive merge and credential-conflict rules still apply; automatic
 sync is not deletion propagation or last-writer-wins replacement.
@@ -149,8 +170,12 @@ encryption passphrase; existing snapshots still require their original one.
 
 The credential switch defaults to off. When enabled, explicitly remembered SSH
 passwords and private-key passphrases are read from the application vault and
-included only inside the encrypted archive. Missing remembered passwords fail
-capture. Agent/default/hardware key credentials are not exported.
+included only inside the encrypted archive. A missing remembered password adds
+a warning and exports that host's connection details without a credential.
+Passwords already in the cloud are retained and can be restored during the same
+sync. An absent private-key passphrase is allowed because the key may be
+unencrypted. Agent/default/hardware key credentials are not exported. A damaged
+or unreadable credential vault still stops synchronization.
 
 Credentials are associated with portable host metadata, authentication method
 and key digest, not the old machine's absolute identity path. Restore writes
@@ -168,10 +193,14 @@ Turning the switch off does not erase credentials from existing cloud archives.
 
 ## Private Keys
 
-Every explicitly selected identity file is included in the encrypted archive,
-not its original absolute path. Unreadable, missing, public-only or unsupported
-identity files stop synchronization rather than producing a path-only backup.
-Adjacent OpenSSH `-cert.pub` certificates are included as well.
+Every available explicitly selected identity file is included in the encrypted
+archive, not its original absolute path. If a selected file is missing, that
+host is skipped for local export with a warning; other hosts still synchronize.
+The local profile is retained, and existing cloud entries and keys are not
+removed. A matching cloud entry can repair the missing local key during the
+same sync. Unreadable, malformed, public-only or unsupported identity files
+remain errors rather than producing a path-only backup. Adjacent OpenSSH
+`-cert.pub` certificates are included as well.
 
 Saving a private-key host or making a quick connection imports the selected PEM
 or OpenSSH key into `keys/` under the application data directory. The source is
@@ -247,6 +276,18 @@ truncated responses, malformed ciphertext, token rotation, independent concurren
 snapshots, authenticated history and key/password restoration. Credential
 tests use isolated in-memory stores or temporary encrypted file vaults. A real Gitee
 account/token is required for a live authenticated service test.
+
+Mixed-host loopback tests cover missing and available passwords, agent/default
+authentication, unencrypted private keys and missing selected keys in one upload.
+They verify partial-success warnings, unchanged local profiles and preservation
+and restoration of existing cloud passwords and keys. Invalid key contents and
+credential-vault errors remain failures; partial success does not schedule
+automatic failure retries.
+
+Deletion tests cover restart persistence, repeated cloud merges, Gitee Restore
+and WebDAV Sync, credential filtering, key variants, absent key files, deliberate
+re-addition and deletion while a request is in flight. Exclusions remain local;
+cloud snapshots and restoration on a fresh device remain intact.
 
 Vault tests cover restart persistence, six-character passphrase reuse, missing
 keys, wrong keys, tampering, permissions, symlinks, concurrent writes, atomic

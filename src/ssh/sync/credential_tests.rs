@@ -208,13 +208,57 @@ fn cloud_archive_restores_key_bytes_and_passwords_into_an_independent_device_vau
 }
 
 #[test]
-fn missing_passwords_invalid_records_and_conflicting_credentials_fail_without_overwriting() {
+fn a_missing_password_does_not_block_other_hosts_or_available_credentials() {
+    let mut local = password_host();
+    local
+        .upsert(Host {
+            id: 0,
+            address: "available.fixture.invalid".into(),
+            ..local.hosts[0].clone()
+        })
+        .unwrap();
+    local
+        .upsert(Host {
+            address: "agent.fixture.invalid".into(),
+            auth: Authentication::Agent,
+            ..Host::default()
+        })
+        .unwrap();
+    let store = MemoryStore::default();
+    store
+        .insert(&local.hosts[1], "available fixture password")
+        .unwrap();
+    let mut archive = Archive::capture(&local).unwrap();
+    archive.capture_credentials(&local, &store).unwrap();
+    assert_eq!(archive.hosts.len(), 3);
+    assert_eq!(archive.credentials.len(), 1);
+    let mut restored = archive
+        .restore(Connections::default(), &std::env::temp_dir())
+        .unwrap();
+    let destination = MemoryStore::default();
+    assert_eq!(
+        archive
+            .restore_credentials(&mut restored, &destination)
+            .unwrap(),
+        1
+    );
+    let missing = restored
+        .hosts
+        .iter()
+        .find(|host| host.address == local.hosts[0].address)
+        .unwrap();
+    assert!(!missing.remember_secret);
+    assert!(destination.load(missing).unwrap().is_none());
+}
+
+#[test]
+fn invalid_records_and_conflicting_credentials_fail_without_overwriting() {
     let local = password_host();
     let store = MemoryStore::default();
     let mut archive = Archive::capture(&local).unwrap();
-    let error = archive.capture_credentials(&local, &store).unwrap_err();
-    assert!(error.is::<credentials::MissingPasswords>());
-    assert!(error.to_string().contains("credential-fixture.example"));
+    let warnings = archive.capture_credentials(&local, &store).unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("credential-fixture.example"));
     store.insert(&local.hosts[0], "first fixture").unwrap();
     archive.capture_credentials(&local, &store).unwrap();
     let different = MemoryStore::default();
@@ -246,7 +290,16 @@ fn missing_passwords_invalid_records_and_conflicting_credentials_fail_without_ov
 }
 
 #[test]
-fn missing_password_is_reported_before_contacting_the_provider() {
+fn a_broken_credential_store_still_fails_before_contacting_the_provider() {
+    struct BrokenStore;
+    impl Store for BrokenStore {
+        fn load(&self, _: &Host) -> anyhow::Result<Option<Zeroizing<String>>> {
+            anyhow::bail!("fixture: encrypted credential vault is corrupt")
+        }
+        fn insert(&self, _: &Host, _: &str) -> anyhow::Result<()> {
+            unreachable!("a corrupt store is never written")
+        }
+    }
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let client = webdav::Client::at(
@@ -266,10 +319,10 @@ fn missing_password_is_reported_before_contacting_the_provider() {
         key_folder: std::env::temp_dir(),
         restore_only: false,
     };
-    let error = synchronize_with(request, Remote::WebDav(client), &MemoryStore::default())
+    let error = synchronize_with(request, Remote::WebDav(client), &BrokenStore)
         .err()
-        .expect("missing password must fail");
-    assert!(error.is::<credentials::MissingPasswords>());
+        .expect("a corrupt credential store must fail");
+    assert!(error.to_string().contains("credential vault is corrupt"));
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
@@ -286,10 +339,12 @@ fn restoring_credentials_updates_matching_recent_connections_without_syncing_his
     let restored = Restored {
         before: local.hosts.clone(),
         before_next_id: local.next_id,
+        before_deleted: local.deleted_hosts.clone(),
         connections: imported,
         hosts: 1,
         keys: 0,
         credentials: 1,
+        warnings: Vec::new(),
     };
     restored.apply(&mut local).unwrap();
     assert_eq!(local.recent.len(), 1);

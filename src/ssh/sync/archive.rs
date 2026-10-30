@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     Connections, Host,
-    credentials::{Credential, MissingPasswords, Store},
+    credentials::{Credential, Store},
     keys::Key,
 };
 
@@ -100,6 +100,38 @@ impl PortableHost {
 }
 
 impl Archive {
+    pub fn capture_available(
+        local: &Connections,
+        store: &impl Store,
+        include_credentials: bool,
+    ) -> anyhow::Result<(Self, Vec<String>)> {
+        local.validate()?;
+        let mut included = local.clone();
+        included.hosts.clear();
+        let mut warnings = Vec::new();
+        for host in &local.hosts {
+            if !host.identity.is_empty()
+                && !Path::new(&host.identity).try_exists().with_context(|| {
+                    format!("SSH sync: cannot inspect the key for {}", host.label())
+                })?
+            {
+                let warning = format!(
+                    "Skipping local export for {:?}: its selected private key file is missing.",
+                    host.label()
+                );
+                log::warn!("SSH sync: {warning}");
+                warnings.push(warning);
+            } else {
+                included.hosts.push(host.clone());
+            }
+        }
+        let mut archive = Self::capture(&included)?;
+        if include_credentials {
+            warnings.extend(archive.capture_credentials(&included, store)?);
+        }
+        Ok((archive, warnings))
+    }
+
     pub fn capture(local: &Connections) -> anyhow::Result<Self> {
         local.validate()?;
         let mut archive = Self::default();
@@ -200,9 +232,12 @@ impl Archive {
         &mut self,
         local: &Connections,
         store: &impl Store,
-    ) -> anyhow::Result<()> {
-        let mut missing = Vec::new();
+    ) -> anyhow::Result<Vec<String>> {
+        let mut warnings = Vec::new();
         for host in &local.hosts {
+            if !self.hosts.iter().any(|portable| portable.same_fields(host)) {
+                continue;
+            }
             if host.remember_secret && host.auth.has_secret() {
                 match store.load(host)? {
                     Some(secret) => {
@@ -212,16 +247,19 @@ impl Archive {
                         );
                     }
                     None if host.auth == crate::ssh::Authentication::Password => {
-                        missing.push(format!("{:?}", host.label()));
+                        let warning = format!(
+                            "No saved SSH password for {:?}; exporting connection details only.",
+                            host.label()
+                        );
+                        log::warn!("SSH sync: {warning}");
+                        warnings.push(warning);
                     }
                     None => {}
                 }
             }
         }
-        if !missing.is_empty() {
-            return Err(MissingPasswords(missing).into());
-        }
-        self.validate()
+        self.validate()?;
+        Ok(warnings)
     }
 
     pub fn restore_credentials(
@@ -234,7 +272,18 @@ impl Archive {
             if !self.hosts.iter().any(|portable| portable.same_fields(host)) {
                 continue;
             }
-            if let Some(credential) = self.credentials.get(&PortableHost::capture(host)?.id()) {
+            if !host.identity.is_empty()
+                && !Path::new(&host.identity).try_exists().with_context(|| {
+                    format!("SSH sync: cannot inspect the key for {}", host.label())
+                })?
+            {
+                continue;
+            }
+            let portable = PortableHost::capture(host)?;
+            if local.is_deleted(host, portable.key.as_deref()) {
+                continue;
+            }
+            if let Some(credential) = self.credentials.get(&portable.id()) {
                 let existing = store.load(host)?;
                 ensure!(
                     existing
@@ -262,8 +311,10 @@ impl Archive {
 
     pub fn restore(&self, mut local: Connections, folder: &Path) -> anyhow::Result<Connections> {
         self.validate()?;
+        let hosts = self.visible_hosts(&local);
+        let needed: BTreeSet<_> = hosts.iter().filter_map(|host| host.key.clone()).collect();
         let mut installed = BTreeMap::new();
-        for (id, key) in &self.keys {
+        for (id, key) in self.keys.iter().filter(|(id, _)| needed.contains(*id)) {
             installed.insert(id.clone(), key.install(folder)?);
         }
         let mut existing = BTreeMap::new();
@@ -272,7 +323,7 @@ impl Archive {
                 existing.insert(host.id, Key::capture(Path::new(&host.identity))?.id());
             }
         }
-        for portable in &self.hosts {
+        for portable in hosts {
             let identity = portable
                 .key
                 .as_ref()
@@ -300,7 +351,7 @@ impl Archive {
                     host.identity = identity;
                 }
             } else {
-                let host = local.upsert(portable.host(identity))?;
+                let host = local.merge_host(portable.host(identity))?;
                 if let Some(key) = &portable.key {
                     existing.insert(host.id, key.clone());
                 }
@@ -308,5 +359,18 @@ impl Archive {
         }
         local.validate()?;
         Ok(local)
+    }
+
+    pub fn visible_counts(&self, local: &Connections) -> (usize, usize) {
+        let hosts = self.visible_hosts(local);
+        let keys: BTreeSet<_> = hosts.iter().filter_map(|host| host.key.as_ref()).collect();
+        (hosts.len(), keys.len())
+    }
+
+    fn visible_hosts<'a>(&'a self, local: &Connections) -> Vec<&'a PortableHost> {
+        self.hosts
+            .iter()
+            .filter(|host| !local.is_deleted(&host.host(String::new()), host.key.as_deref()))
+            .collect()
     }
 }

@@ -7,6 +7,7 @@
 - Integrated upstream: `6936b6f3edb5f55891dd62898290994f52e24dc0` (0.2.0).
 - Upstream repository: https://github.com/ELY-Open-Source/ELYTerminal.
 - MioTerm keeps its own version, release tags and update endpoint.
+- MioTerm `v0.0.9` is the first release containing this integration.
 
 ## Included
 
@@ -43,6 +44,21 @@ The upstream website and its additional push/PR packaging workflow are excluded.
 The imported `docs/en_us` and `docs/zh_cn` are upstream terminal references,
 not a replacement for MioTerm's README or SSH documentation.
 
+## Post-Merge Review
+
+- Managed SSH sessions accept only directly streamed Kitty graphics data.
+  File, temporary-file and shared-memory media are refused before loading,
+  including queries and animation frames; local sessions retain those media.
+- Managed SSH OSC 7 reports always use remote POSIX parsing, even for an
+  empty authority, `localhost` or a hostname matching the client. Windows
+  drive and UNC conversion remains limited to ordinary local sessions.
+- The session flag is fixed at launch. Manually running `ssh` inside a local
+  terminal does not turn that terminal into a managed SSH session.
+
+Regression tests reproduced both bugs before their fixes. They cover client
+file preservation, shared-memory refusal, partial-transmission cancellation,
+streamed pixels and placements, and OSC 7 routing through an actual PTY.
+
 ## Validation
 
 Use the pinned Rust 1.95.0 toolchain. On local macOS installations without a
@@ -64,7 +80,7 @@ On macOS with Rust 1.95.0:
 
 - Release binary and native screenshot harness build successfully.
 - Clippy passes for all targets with warnings denied; formatting passes.
-- Core regression: 498 passed, one opt-in Gitee test ignored.
+- Core regression after review and sync fixes: 518 passed, one opt-in Gitee test ignored.
 - Four shell-dependent tests require unavailable fish or PowerShell locally.
 - Application vault and actual askpass helper tests pass in an isolated folder.
 - Generated encrypted RSA PEM: import, delete source, SSH login and SFTP upload pass against loopback sshd.

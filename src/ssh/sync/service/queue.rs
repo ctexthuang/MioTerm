@@ -22,8 +22,8 @@ impl Queue {
         self.due = None;
     }
 
-    pub fn finished(&mut self, success: bool, retryable: bool, now: Instant) {
-        if success || !retryable {
+    pub fn finished(&mut self, success: bool, now: Instant) {
+        if success {
             self.failures = 0;
         } else if self.due.is_none() {
             if let Some(delay) = [30, 120, 600].get(self.failures) {
@@ -47,7 +47,7 @@ mod tests {
         assert!(!queue.ready(now + SETTLE));
         assert!(queue.ready(now + SETTLE + Duration::from_secs(1)));
         queue.started();
-        queue.finished(true, true, now);
+        queue.finished(true, now);
         assert!(!queue.ready(now + Duration::from_secs(100)));
     }
 
@@ -58,7 +58,7 @@ mod tests {
         queue.changed(now);
         queue.started();
         queue.changed(now);
-        queue.finished(true, true, now);
+        queue.finished(true, now);
         assert!(queue.ready(now + SETTLE));
     }
 
@@ -68,30 +68,30 @@ mod tests {
         let mut now = Instant::now();
         for delay in [30, 120, 600] {
             queue.started();
-            queue.finished(false, true, now);
+            queue.finished(false, now);
             assert!(!queue.ready(now + Duration::from_secs(delay - 1)));
             now += Duration::from_secs(delay);
             assert!(queue.ready(now));
         }
         queue.started();
-        queue.finished(false, true, now);
+        queue.finished(false, now);
         assert!(!queue.ready(now + Duration::from_secs(3600)));
         queue.changed(now);
         assert!(queue.ready(now + SETTLE));
     }
 
     #[test]
-    fn missing_credentials_wait_for_edits_but_preserve_edits_during_a_request() {
+    fn successful_partial_syncs_preserve_edits_without_scheduling_retries() {
         let mut queue = Queue::default();
         let now = Instant::now();
         queue.changed(now);
         queue.started();
-        queue.finished(false, false, now);
+        queue.finished(true, now);
         assert!(!queue.ready(now + Duration::from_secs(3600)));
         queue.changed(now);
         queue.started();
         queue.changed(now);
-        queue.finished(false, false, now);
+        queue.finished(true, now);
         assert!(queue.ready(now + SETTLE));
     }
 }

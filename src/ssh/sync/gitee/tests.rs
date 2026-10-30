@@ -98,7 +98,7 @@ fn phrase() -> SecretString {
 #[test]
 fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls() {
     let mut snapshot = Value::Null;
-    let (client, task) = server(4, move |step, request| match step {
+    let (client, task) = server(6, move |step, request| match step {
         0 => (200, json!([])),
         1 => {
             assert!(request.headers.starts_with("POST /gists "));
@@ -108,8 +108,8 @@ fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls(
             snapshot["id"] = json!("saved");
             (201, snapshot.clone())
         }
-        2 => (200, json!([snapshot.clone()])),
-        3 => (200, snapshot.clone()),
+        2 | 4 => (200, json!([snapshot.clone()])),
+        3 | 5 => (200, snapshot.clone()),
         _ => unreachable!(),
     });
     let base = client.base.clone();
@@ -120,6 +120,21 @@ fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls(
     let mut password = password_host().hosts.remove(0);
     password.id = 0;
     local.upsert(password).unwrap();
+    local
+        .upsert(Host {
+            id: 0,
+            address: "missing-password.fixture.invalid".into(),
+            ..local.hosts[1].clone()
+        })
+        .unwrap();
+    local
+        .upsert(Host {
+            id: 0,
+            identity: folder.0.join("missing-key").to_str().unwrap().into(),
+            address: "missing-key.fixture.invalid".into(),
+            ..local.hosts[0].clone()
+        })
+        .unwrap();
     let original = local.hosts[0].identity.clone();
     let source = MemoryStore::default();
     source
@@ -139,7 +154,13 @@ fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls(
         restore_only,
         key_folder: folder.0.join("restored-keys"),
     };
-    synchronize_with(request(local, false), Remote::Gitee(client), &source).unwrap();
+    let uploaded = synchronize_with(request(local, false), Remote::Gitee(client), &source).unwrap();
+    assert_eq!(
+        (uploaded.hosts, uploaded.keys, uploaded.credentials),
+        (3, 1, 2)
+    );
+    assert_eq!(uploaded.warnings.len(), 2);
+    assert_eq!(uploaded.connections.hosts.len(), 4);
     std::fs::remove_file(original).unwrap();
     let client = Client::at(
         &base,
@@ -154,8 +175,17 @@ fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls(
         &target,
     )
     .unwrap();
+    assert_eq!(restored.hosts, 3);
     assert_eq!(restored.credentials, 2);
     assert_eq!(restored.keys, 1);
+    let missing_password = restored
+        .connections
+        .hosts
+        .iter()
+        .find(|host| host.address == "missing-password.fixture.invalid")
+        .unwrap();
+    assert!(!missing_password.remember_secret);
+    assert!(target.load(missing_password).unwrap().is_none());
     let key_host = restored
         .connections
         .hosts
@@ -172,6 +202,23 @@ fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls(
         target.load(key_host).unwrap().unwrap().as_str(),
         "fixture password only"
     );
+    let mut deleted = restored.connections.clone();
+    deleted.remove(key_host.id).unwrap();
+    let client = Client::at(
+        &base,
+        &Gitee::default(),
+        &SecretString::from("fixture-token".to_string()),
+    )
+    .unwrap();
+    let destination = MemoryStore::default();
+    let filtered =
+        synchronize_with(request(deleted, true), Remote::Gitee(client), &destination).unwrap();
+    assert_eq!(
+        (filtered.hosts, filtered.keys, filtered.credentials),
+        (2, 0, 1)
+    );
+    assert_eq!(filtered.connections.hosts.len(), 2);
+    assert!(destination.load(key_host).unwrap().is_none());
     let requests = task.join().unwrap();
     for request in requests {
         let first = request.headers.lines().next().unwrap();

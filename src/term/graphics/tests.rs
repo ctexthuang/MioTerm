@@ -86,6 +86,28 @@ fn quiet_keeps_back_what_it_names() {
 }
 
 #[test]
+fn the_documented_graphics_sample_displays_without_a_shell_reply() {
+    let pixels = [245, 194, 231, 255].repeat(16 * 16);
+    for remote in [false, true] {
+        let mut graphics = Graphics::new(0, (80, 24), (10, 20)).remote(remote);
+        assert_eq!(
+            send(
+                &mut graphics,
+                "a=T,q=2,f=32,s=16,v=16,i=901,c=8,r=4",
+                &pixels
+            ),
+            None
+        );
+        let image = graphics.image(901).expect("sample stored");
+        assert_eq!((image.width, image.height), (16, 16));
+        assert_eq!(image.pixels, pixels);
+        assert_eq!(graphics.lock().screen().placements.len(), 1);
+        assert_eq!(raw(&mut graphics, "a=d,d=I,i=901,q=2"), None);
+        assert!(graphics.image(901).is_none());
+    }
+}
+
+#[test]
 fn chunks_join_answer_once_at_the_end_and_keep_their_first_quiet() {
     let mut graphics = Graphics::new(0, (80, 24), (10, 20));
     let pixels: Vec<u8> = (0..16).collect();

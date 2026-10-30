@@ -27,7 +27,7 @@ fn foreign_directory_reports_coexist_with_named_prompts_and_graphics() {
         report(
             found,
             &events,
-            10,
+            (10, true),
             &mut last,
             (&mut kitty, &mut titles, &mut named),
             &|| Some(10),
@@ -46,4 +46,33 @@ fn foreign_directory_reports_coexist_with_named_prompts_and_graphics() {
         last.is_none(),
         "remote paths never become local directories"
     );
+}
+
+#[test]
+fn managed_ssh_reports_remain_remote_even_when_the_hostname_matches() {
+    let (events, mut heard) = futures::channel::mpsc::unbounded();
+    let (mut kitty, mut titles, mut named, mut last) =
+        (Kitty::default(), Titles::default(), false, None);
+    for body in [
+        &b"7;file://localhost/C%3A/project"[..],
+        b"7;file:////server/a%5Cb",
+        b"7;file:///home/project",
+    ] {
+        report(
+            Found::Osc(body, body.len()),
+            &events,
+            (10, true),
+            &mut last,
+            (&mut kitty, &mut titles, &mut named),
+            &|| Some(10),
+            &|_, _| false,
+        );
+    }
+    for expected in ["/C:/project", "//server/a\\b", "/home/project"] {
+        assert!(matches!(
+            heard.try_recv(),
+            Ok(PtyEvent::RemoteFolder(path)) if path.as_os_str() == std::ffi::OsStr::new(expected)
+        ));
+    }
+    assert!(last.is_none(), "no remote path became a local folder");
 }

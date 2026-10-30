@@ -79,6 +79,8 @@ pub struct Launch {
     pub env: Vec<(String, String)>,
     /// Shell integration makes it report its folder.
     pub reports: bool,
+    /// Managed SSH output names remote paths and cannot access local image media.
+    pub remote: bool,
     /// How its shell reads a path dropped on it.
     pub quote: Quote,
 }
@@ -180,11 +182,12 @@ pub fn spawn(
     };
     let grid = TermSize::new(size.num_cols.into(), size.num_lines.into());
     let mut term = Term::new(config, &grid, listener.clone());
-    let graphics = Graphics::new(pid, (size.num_cols.into(), size.num_lines.into()), cell);
+    let graphics = Graphics::new(pid, (size.num_cols.into(), size.num_lines.into()), cell)
+        .remote(launch.remote);
     let shared = graphics.shared();
     term.set_graphics(Box::new(graphics));
     let term = Arc::new(FairMutex::new(term));
-    let tapped = Tapped::new(raw, sender, pid);
+    let tapped = Tapped::new(raw, sender, pid, launch.remote);
     #[cfg(unix)]
     let tapped = tapped.holding(master.try_clone().map_err(|error| {
         anyhow::anyhow!("pty {pid}: no copy of the master for the tap: {error}")

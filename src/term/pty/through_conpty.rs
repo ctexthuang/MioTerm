@@ -20,6 +20,7 @@ fn powershell(script: &str) -> (u32, Vec<PtyEvent>) {
         cwd: std::env::temp_dir(),
         env: Vec::new(),
         reports: false,
+        remote: false,
         quote: Quote::PowerShell,
     };
     let (pty, mut events) = spawn(&launch, (80, 24), (8, 16), config(&Settings::default()))

@@ -121,6 +121,7 @@ pub fn launch(shell: &str, start: impl Into<Start>, dir: &Path) -> anyhow::Resul
         cwd,
         env: Vec::new(),
         reports: true,
+        remote: false,
         quote: match name.as_str() {
             "pwsh" | "powershell" => Quote::PowerShell,
             "cmd" => Quote::Cmd,

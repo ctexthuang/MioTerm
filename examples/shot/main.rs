@@ -29,6 +29,7 @@ fn main() {
         cwd: std::env::current_dir().expect("a current folder"),
         env: Vec::new(),
         reports: false,
+        remote: false,
         quote: Quote::Posix,
     };
     gpui_platform::application()

@@ -4,21 +4,6 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::ssh::{Host, auth, vault::Vault};
 
-#[derive(Debug)]
-pub(super) struct MissingPasswords(pub Vec<String>);
-
-impl std::fmt::Display for MissingPasswords {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "SSH sync: no saved password in the application vault for {}. Import system credentials or edit the host to re-enter it. If the password is already in the cloud archive, use Restore. Automatic retries wait for a local change or manual retry.",
-            self.0.join(", ")
-        )
-    }
-}
-
-impl std::error::Error for MissingPasswords {}
-
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(super) struct Credential(pub String);

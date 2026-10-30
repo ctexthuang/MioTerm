@@ -242,10 +242,12 @@ fn applying_sync_never_overwrites_a_host_edited_while_the_network_was_busy() {
     let restored = Restored {
         before: local.hosts.clone(),
         before_next_id: local.next_id,
+        before_deleted: local.deleted_hosts.clone(),
         connections: local,
         hosts: 1,
         keys: 1,
         credentials: 0,
+        warnings: Vec::new(),
     };
     assert!(restored.apply(&mut edited).is_err());
     assert_eq!(edited.hosts[0].name, "Edited during sync");
@@ -267,10 +269,12 @@ fn applying_sync_preserves_allocated_ids_and_does_not_reassign_an_old_recent_tar
     let restored = || Restored {
         before: local.hosts.clone(),
         before_next_id: local.next_id,
+        before_deleted: local.deleted_hosts.clone(),
         connections: imported.clone(),
         hosts: 1,
         keys: 1,
         credentials: 0,
+        warnings: Vec::new(),
     };
     let mut allocated = local.clone();
     allocated.next_id += 1;

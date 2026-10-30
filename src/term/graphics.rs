@@ -53,6 +53,7 @@ impl Shared {
 /// One session's kitty graphics: the shared state and a transmission.
 pub struct Graphics {
     pid: u32,
+    remote: bool,
     shared: Arc<Mutex<Shared>>,
     loading: Option<Loading>,
     /// Where the last placement left the cursor.
@@ -74,10 +75,16 @@ impl Graphics {
         };
         Self {
             pid,
+            remote: false,
             shared: Arc::new(Mutex::new(shared)),
             loading: None,
             moved: None,
         }
+    }
+
+    pub fn remote(mut self, remote: bool) -> Self {
+        self.remote = remote;
+        self
     }
 
     /// The state the view draws from.
@@ -97,7 +104,13 @@ impl Graphics {
             placement: command.int(b'p'),
         };
         let mut quiet = command.quiet;
-        let reply = if ids.id > 0 && ids.number > 0 {
+        let reply = if self.remote
+            && matches!(command.action, b'q' | b't' | b'T' | b'f')
+            && command.letter(b't').is_some_and(|medium| medium != b'd')
+        {
+            self.loading = None;
+            Some(Reply::failed(ids, Error::Medium))
+        } else if ids.id > 0 && ids.number > 0 {
             Some(Reply::failed(ids, Error::Both))
         } else {
             match command.action {

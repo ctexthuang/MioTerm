@@ -59,9 +59,10 @@ pub(super) fn load(path: &Path) -> anyhow::Result<Connections> {
     data.validate()
         .with_context(|| format!("ssh: invalid connections at {}", path.display()))?;
     log::info!(
-        "ssh: loaded {} hosts and {} recent connections from {}",
+        "ssh: loaded {} hosts, {} recent connections and {} local deletions from {}",
         data.hosts.len(),
         data.recent.len(),
+        data.deleted_hosts.len(),
         path.display()
     );
     Ok(data)

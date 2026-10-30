@@ -37,6 +37,7 @@ pub(crate) struct Tapped<P> {
     titles: Titles,
     events: UnboundedSender<PtyEvent>,
     pid: u32,
+    remote: bool,
     last: Option<PathBuf>,
     /// The session's own shell names its prompts.
     named: bool,
@@ -49,7 +50,7 @@ pub(crate) struct Tapped<P> {
 }
 
 impl<P> Tapped<P> {
-    pub fn new(inner: P, events: UnboundedSender<PtyEvent>, pid: u32) -> Self {
+    pub fn new(inner: P, events: UnboundedSender<PtyEvent>, pid: u32, remote: bool) -> Self {
         Self {
             inner,
             scanner: Osc::default(),
@@ -59,6 +60,7 @@ impl<P> Tapped<P> {
             titles: Titles::default(),
             events,
             pid,
+            remote,
             last: None,
             named: false,
             #[cfg(windows)]
@@ -136,7 +138,7 @@ impl<P: EventedReadWrite> Tapped<P> {
             report(
                 found,
                 events,
-                pid,
+                (pid, self.remote),
                 last,
                 (kitty, titles, named),
                 &holder,
@@ -200,7 +202,7 @@ impl<P: EventedReadWrite> Tapped<P> {
 fn report(
     found: Found,
     events: &UnboundedSender<PtyEvent>,
-    pid: u32,
+    (pid, remote): (u32, bool),
     last: &mut Option<PathBuf>,
     (kitty, titles, named): (&mut Kitty, &mut Titles, &mut bool),
     holder: &dyn Fn() -> Option<i32>,
@@ -253,7 +255,11 @@ fn report(
                 let group = holder();
                 log::debug!("pty {pid}: {ask:?} from group {group:?}");
                 PtyEvent::Ask(ask, group)
-            } else if let Some(folder) = body.strip_prefix(b"7;").and_then(folder) {
+            } else if let Some(folder) = body
+                .strip_prefix(b"7;")
+                .filter(|_| !remote)
+                .and_then(folder)
+            {
                 if last.as_ref() == Some(&folder) {
                     log::debug!("pty {pid}: folder {} again", folder.display());
                 } else {

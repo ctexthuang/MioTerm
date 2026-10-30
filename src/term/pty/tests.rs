@@ -13,6 +13,7 @@ use crate::term::{
 
 struct Ran {
     folders: Vec<PathBuf>,
+    remote_folders: Vec<PathBuf>,
     marks: Vec<Mark>,
     /// What programs said of their status, a full reset as none.
     statuses: Vec<Option<Status>>,
@@ -29,50 +30,74 @@ struct Ran {
 }
 
 fn run(script: &str, size: (usize, usize)) -> Ran {
+    run_on(script, size, false)
+}
+
+fn run_on(script: &str, size: (usize, usize), remote: bool) -> Ran {
     crate::testlog::init();
     let launch = Launch {
         program: Some(("/bin/sh".into(), vec!["-c".into(), script.into()])),
         cwd: std::env::temp_dir(),
         env: vec![("ELY".into(), "ok".into())],
         reports: false,
+        remote,
         quote: Quote::Posix,
     };
     let (pty, mut events) =
         spawn(&launch, size, (8, 16), config(&Settings::default())).expect("sh starts");
-    let (folders, marks, statuses, asks, said, success) = futures::executor::block_on(async {
-        let (mut folders, mut marks, mut statuses, mut asks, mut said, mut success) = (
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            false,
-        );
-        while let Some(event) = events.next().await {
-            match event {
-                PtyEvent::Folder(folder) => folders.push(folder),
-                PtyEvent::Mark(mark, _) => marks.push(mark),
-                PtyEvent::Status(status, _) => statuses.push(Some(status)),
-                PtyEvent::Reset => {
-                    said.push("reset".to_string());
-                    statuses.push(None);
-                }
-                PtyEvent::Title(title) => said.push(format!("title {title}")),
-                PtyEvent::Clipboard(packet) => said.push(format!("clipboard {packet:?}")),
-                PtyEvent::Ask(ask, _) => {
-                    if let Ask::Show(notice) = &ask {
-                        said.push(format!("show {}", notice.title));
+    let (folders, remote_folders, marks, statuses, asks, said, success) =
+        futures::executor::block_on(async {
+            let (
+                mut folders,
+                mut remote_folders,
+                mut marks,
+                mut statuses,
+                mut asks,
+                mut said,
+                mut success,
+            ) = (
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+            );
+            while let Some(event) = events.next().await {
+                match event {
+                    PtyEvent::Folder(folder) => folders.push(folder),
+                    PtyEvent::RemoteFolder(folder) => remote_folders.push(folder),
+                    PtyEvent::Mark(mark, _) => marks.push(mark),
+                    PtyEvent::Status(status, _) => statuses.push(Some(status)),
+                    PtyEvent::Reset => {
+                        said.push("reset".to_string());
+                        statuses.push(None);
                     }
-                    asks.push(ask);
+                    PtyEvent::Title(title) => said.push(format!("title {title}")),
+                    PtyEvent::Clipboard(packet) => said.push(format!("clipboard {packet:?}")),
+                    PtyEvent::Ask(ask, _) => {
+                        if let Ask::Show(notice) = &ask {
+                            said.push(format!("show {}", notice.title));
+                        }
+                        asks.push(ask);
+                    }
+                    PtyEvent::Term(Event::ChildExit(status)) => success = status.success(),
+                    PtyEvent::Term(Event::PtyWrite(reply)) => pty.write(reply.into_bytes()),
+                    PtyEvent::Term(Event::Exit) => break,
+                    PtyEvent::Term(_) | PtyEvent::Mouse(_) => {}
                 }
-                PtyEvent::Term(Event::ChildExit(status)) => success = status.success(),
-                PtyEvent::Term(Event::PtyWrite(reply)) => pty.write(reply.into_bytes()),
-                PtyEvent::Term(Event::Exit) => break,
-                PtyEvent::Term(_) | PtyEvent::Mouse(_) | PtyEvent::RemoteFolder(_) => {}
             }
-        }
-        (folders, marks, statuses, asks, said, success)
-    });
+            (
+                folders,
+                remote_folders,
+                marks,
+                statuses,
+                asks,
+                said,
+                success,
+            )
+        });
     let term = pty.term.lock();
     let row = &term.grid()[Line(0)];
     let text: String = (0..24).map(|column| row[Column(column)].c).collect();
@@ -83,6 +108,7 @@ fn run(script: &str, size: (usize, usize)) -> Ran {
     });
     Ran {
         folders,
+        remote_folders,
         marks,
         statuses,
         asks,
@@ -135,6 +161,34 @@ fn kitty_graphics_replies_reach_the_program_and_a_temporary_file_goes() {
 }
 
 #[test]
+fn a_remote_pty_refuses_client_files_but_keeps_streamed_graphics() {
+    use base64::Engine;
+    let file = std::env::temp_dir().join(format!(
+        "tty-graphics-protocol-remote-{}",
+        std::process::id()
+    ));
+    std::fs::write(&file, [1, 2, 3]).expect("written");
+    let path = base64::engine::general_purpose::STANDARD.encode(file.to_string_lossy().as_bytes());
+    let script = format!(
+        r#"printf '\033_Gi=1,q=2,t=t,f=24,s=1,v=1;{path}\033\\\033_Ga=T,i=2,q=2,f=24,s=1,v=1;AAAA\033\\'"#
+    );
+    let ran = run_on(&script, (40, 4), true);
+    let stayed = file.exists();
+    if stayed {
+        std::fs::remove_file(file).unwrap();
+    }
+    assert!(stayed, "remote graphics deleted a client file");
+    assert!(ran.success);
+    assert!(
+        crate::testlog::logged(&format!(
+            "graphics {}: image 2 placed Grid at 0, 0 over 1 by 1 cells",
+            ran.pid
+        )),
+        "streamed images still display"
+    );
+}
+
+#[test]
 fn osc_7_reaches_the_session_as_a_folder() {
     let ran = run(
         "printf '\\033]7;file:///tmp/a%%20b\\007x\\033]7;file://elsewhere.invalid/c\\033\\\\'",
@@ -142,6 +196,18 @@ fn osc_7_reaches_the_session_as_a_folder() {
     );
     assert_eq!(ran.folders, [PathBuf::from("/tmp/a b")]);
     assert_eq!(ran.text, "x");
+}
+
+#[test]
+fn a_remote_pty_keeps_osc_7_paths_out_of_local_folders() {
+    let ran = run_on(
+        r"printf '\033]7;file://localhost/C%%3A/project\007'",
+        (40, 4),
+        true,
+    );
+    assert!(ran.success);
+    assert!(ran.folders.is_empty());
+    assert_eq!(ran.remote_folders, [PathBuf::from("/C:/project")]);
 }
 
 #[test]
@@ -275,6 +341,7 @@ fn the_foreground_is_the_program_s_own_group() {
         cwd: std::env::temp_dir(),
         env: Vec::new(),
         reports: false,
+        remote: false,
         quote: Quote::Posix,
     };
     let (pty, _events) =
@@ -305,6 +372,7 @@ fn close_after_ready(script: &str, reaped: &str) {
         cwd: std::env::temp_dir(),
         env: Vec::new(),
         reports: false,
+        remote: false,
         quote: Quote::Posix,
     };
     let (pty, mut events) =
@@ -352,6 +420,7 @@ fn a_missing_folder_stops_the_start() {
         cwd: "/nonexistent/ely".into(),
         env: Vec::new(),
         reports: false,
+        remote: false,
         quote: Quote::Posix,
     };
     let error = spawn(&launch, (20, 4), (8, 16), config(&Settings::default()))
@@ -371,6 +440,7 @@ fn a_folder_that_cannot_be_entered_stops_the_start() {
         cwd: folder.clone(),
         env: Vec::new(),
         reports: false,
+        remote: false,
         quote: Quote::Posix,
     };
     let started = spawn(&launch, (20, 4), (8, 16), config(&Settings::default()));

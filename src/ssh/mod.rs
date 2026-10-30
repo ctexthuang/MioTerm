@@ -7,6 +7,7 @@ use crate::term::{Launch, Quote};
 
 pub mod auth;
 pub mod control;
+mod deleted;
 pub mod files;
 mod keys;
 pub mod panel;
@@ -176,6 +177,7 @@ impl Host {
             cwd,
             env: Vec::new(),
             reports: false,
+            remote: true,
             quote: Quote::Posix,
         };
         auth::configure_launch(self, &mut launch)?;
@@ -196,6 +198,8 @@ pub struct Connections {
     pub next_id: u64,
     pub hosts: Vec<Host>,
     pub recent: Vec<Recent>,
+    #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub(crate) deleted_hosts: std::collections::BTreeSet<deleted::Deletion>,
 }
 
 impl Default for Connections {
@@ -204,12 +208,14 @@ impl Default for Connections {
             next_id: 1,
             hosts: Vec::new(),
             recent: Vec::new(),
+            deleted_hosts: Default::default(),
         }
     }
 }
 
 impl Connections {
     pub fn validate(&self) -> anyhow::Result<()> {
+        deleted::validate(&self.deleted_hosts)?;
         let mut ids = std::collections::HashSet::new();
         for host in &self.hosts {
             host.validate()?;
@@ -229,7 +235,13 @@ impl Connections {
         Ok(())
     }
 
-    pub fn upsert(&mut self, mut host: Host) -> anyhow::Result<Host> {
+    pub fn upsert(&mut self, host: Host) -> anyhow::Result<Host> {
+        let host = self.merge_host(host)?;
+        self.allow_host(&host);
+        Ok(host)
+    }
+
+    fn merge_host(&mut self, mut host: Host) -> anyhow::Result<Host> {
         host.validate()?;
         if host.id == 0 {
             host.id = self.next_id;
@@ -280,7 +292,12 @@ impl Connections {
             .position(|host| host.id == id)
             .context("ssh: the host being deleted no longer exists")?;
         let host = self.hosts.remove(index);
+        self.deleted_hosts.insert(deleted::Deletion::capture(&host));
         self.recent.retain(|recent| recent.host.id != id);
+        log::info!(
+            "ssh: deleted host {:?}; local sync exclusion recorded",
+            host.label()
+        );
         Ok(host)
     }
 }

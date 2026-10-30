@@ -49,6 +49,56 @@ fn a_file_reads_from_its_offset_for_its_size_and_stays() {
 }
 
 #[test]
+fn remote_graphics_never_read_or_delete_client_files() {
+    let mut graphics = Graphics::new(0, (80, 24), (10, 20)).remote(true);
+    let root = folder(&std::env::temp_dir(), "remote");
+    let file = root.join("tty-graphics-protocol-client");
+    std::fs::write(&file, [1, 2, 3, 4]).expect("written");
+    let path = bytes(&file);
+    let mut replies = Vec::new();
+    for action in ["q", "t", "T", "f"] {
+        for medium in ["f", "t", "s"] {
+            let keys = format!("a={action},i=1,t={medium},s=1,v=1");
+            replies.push(send(&mut graphics, &keys, &path));
+        }
+    }
+    let stayed = file.exists();
+    let stored = graphics.image(1).is_some();
+    std::fs::remove_dir_all(root).expect("cleanup");
+    assert!(stayed, "SSH output deleted a client file");
+    assert!(!stored, "SSH output loaded a client file");
+    assert!(
+        replies
+            .iter()
+            .all(|got| *got == reply(1, "EINVAL: unsupported medium"))
+    );
+    assert_eq!(
+        send(&mut graphics, "i=2,s=1,v=1", &[4, 3, 2, 1]),
+        reply(2, "OK")
+    );
+    assert_eq!(
+        graphics.image(2).expect("streamed image").pixels,
+        [4, 3, 2, 1]
+    );
+}
+
+#[test]
+fn a_rejected_remote_medium_cancels_the_partial_transmission() {
+    let mut graphics = Graphics::new(0, (80, 24), (10, 20)).remote(true);
+    assert_eq!(send(&mut graphics, "i=1,s=1,v=1,m=1", &[4, 3]), None);
+    assert_eq!(
+        send(&mut graphics, "a=q,i=2,t=f", b"unused"),
+        reply(2, "EINVAL: unsupported medium")
+    );
+    assert_eq!(
+        send(&mut graphics, "i=3,t=d,s=1,v=1", &[1, 2, 3, 4]),
+        reply(3, "OK")
+    );
+    assert!(graphics.image(1).is_none());
+    assert_eq!(graphics.image(3).expect("new image").pixels, [1, 2, 3, 4]);
+}
+
+#[test]
 fn every_file_that_does_not_read_answers_alike() {
     let mut graphics = Graphics::new(0, (80, 24), (10, 20));
     let folder = folder(&std::env::temp_dir(), "unread");
@@ -154,6 +204,11 @@ fn shared_memory_is_read_then_unlinked() {
         libc::munmap(map, 6);
         libc::close(fd);
     }
+    let mut remote = Graphics::new(0, (80, 24), (10, 20)).remote(true);
+    assert_eq!(
+        send(&mut remote, "i=1,t=s,s=1,v=1,O=2", name.as_bytes()),
+        reply(1, "EINVAL: unsupported medium")
+    );
     let mut graphics = Graphics::new(0, (80, 24), (10, 20));
     assert_eq!(
         send(&mut graphics, "i=1,t=s,s=1,v=1,O=2", name.as_bytes()),
@@ -207,6 +262,11 @@ fn shared_memory_is_read_then_closed() {
         std::ptr::copy_nonoverlapping([0u8, 0, 1, 2, 3, 4].as_ptr(), view.Value.cast::<u8>(), 6);
         UnmapViewOfFile(view);
     }
+    let mut remote = Graphics::new(0, (80, 24), (10, 20)).remote(true);
+    assert_eq!(
+        send(&mut remote, "i=1,t=s,s=1,v=1,O=2", name.as_bytes()),
+        reply(1, "EINVAL: unsupported medium")
+    );
     let mut graphics = Graphics::new(0, (80, 24), (10, 20));
     assert_eq!(
         send(&mut graphics, "i=1,t=s,s=1,v=1,O=2", name.as_bytes()),

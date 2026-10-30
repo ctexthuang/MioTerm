@@ -356,7 +356,7 @@ impl Chunks {
             dry: 0,
             sink: io::sink(),
         };
-        Tapped::new(pty, sender, 1)
+        Tapped::new(pty, sender, 1, false)
     }
 }
 
@@ -472,7 +472,7 @@ fn only_the_session_s_own_named_prompt_names_its_shell() {
         report(
             found,
             &events,
-            10,
+            (10, false),
             &mut last,
             (&mut kitty, &mut titles, named),
             &|| Some(group),

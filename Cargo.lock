@@ -1927,7 +1927,7 @@ dependencies = [
 
 [[package]]
 name = "elyterminal"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "age",
  "alacritty_terminal",

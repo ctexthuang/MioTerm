@@ -1,4 +1,4 @@
-# MioTerm 0.0.8
+# MioTerm 0.0.9
 
 MioTerm is an independent fork of ELYTerminal, extended with SSH hosts,
 SFTP transfers, remote Git, system monitoring and encrypted Gitee/WebDAV sync.
@@ -8,30 +8,31 @@ Upstream: https://github.com/ELY-Open-Source/ELYTerminal
 The upstream copyright and MIT license are retained. Bundled license
 files are included with each package. This is not an upstream release.
 
-## New In 0.0.8
+## New In 0.0.9
 
-- Private-key hosts now import selected PEM or OpenSSH identities into the
-  application data directory's keys folder on Save or Quick Connect. A native
-  file picker is available beside the private-key field. Original files are
-  never modified; after saving, moving or removing them does not break the host.
-- Repeated imports reuse content-addressed copies and include adjacent OpenSSH
-  certificates. The same private key retains its remembered passphrase when its
-  path changes; a different key does not inherit the previous passphrase.
-  Conflicting saved credentials are not overwritten during migration.
-- Cloud archives contain actual base64 key contents inside the encrypted JSON,
-  not source-machine paths or separately uploaded PEM files. Restoring on another
-  platform installs keys in that machine's application directory and updates
-  the host paths. Edit and save older external-path hosts once to import them.
-- Key installs are locked across concurrent imports/restores and use flushed
-  temporary files before atomic installation. Interrupted imports can be retried.
-  Existing different keys, symlinks and unsafe managed paths are not overwritten.
-- Host deletion persists the connection list before removing unused credentials,
-  preserving credentials referenced by other saved hosts or recent connections.
-  Deletion now notifies automatic synchronization. Saving a host also notifies
-  synchronization even if subsequent unused-credential cleanup fails.
-- An in-progress save cannot be dismissed or replaced by another host editor.
-  Matching recent connections follow imported key paths without rewriting past
-  history for a different destination.
+- Integrated ELYTerminal 0.2.0 at upstream commit `6936b6f`, preserving MioTerm's
+  SSH, SFTP, remote Git, monitoring and encrypted synchronization features.
+  Upstream additions include English/Chinese UI, custom themes and backgrounds,
+  session menus and reordering, Kitty graphics, clipboard permissions, packed
+  scrollback, terminal performance improvements and platform fixes.
+- A host without a saved SSH password no longer blocks the entire sync.
+  Connection details still synchronize, with a warning about the missing secret.
+  A missing selected key skips that host's local export without discarding cloud
+  material or preventing other hosts from synchronizing. Corrupt vaults, invalid
+  keys, conflicting credentials and network failures still report errors.
+- Deleting a saved host records a persistent local exclusion. Switching views,
+  automatic sync, Sync now and Restore no longer bring that host back. Excluded
+  keys and credentials are not restored. Explicitly saving the host again clears
+  its exclusion; distinct known private-key variants remain independent.
+- Deletion protection is local to this device, not cloud deletion propagation.
+  Other devices and encrypted cloud history remain intact. Hosts deleted with an
+  older build must be deleted once again after upgrading. Do not run older and
+  newer builds against the same configuration directory simultaneously.
+- Managed SSH sessions accept streamed Kitty images but cannot read client-side
+  files, temporary files or shared memory through graphics commands. Their OSC 7
+  directory reports always use remote POSIX paths, including localhost reports.
+- Added a Chinese manual testing guide in `docs/testing.md`, including a quiet
+  Kitty graphics sample that does not insert protocol replies into the shell.
 
 Managed keys remain ordinary OpenSSH identity files, preserving their original
 key encryption format. They are protected by Unix 0700/0600 permissions or
@@ -39,19 +40,20 @@ Windows current-user ACLs, not by an additional local vault encryption layer.
 Passwords and key passphrases remain in the encrypted application credential
 vault. Cloud archives use the separate synchronization passphrase.
 
-Regression coverage includes RSA PEM import, removal of the source, certificate
-preservation, encrypted JSON restoration, passphrase migration/conflicts,
-concurrent imports and interrupted writes. A loopback SSH/SFTP fixture exercises
-real encrypted PEM authentication and upload after deleting the original key,
-with SSH agents and connection reuse disabled. Live authenticated Gitee testing
-was not rerun for this version. Native Windows/Linux workflows have not been
-manually verified; automated platform checks run in the Release workflow.
+Local verification passed 518 core regression tests, all-target Clippy with
+warnings denied, formatting and the handwritten-file size checks. The opt-in
+live Gitee test was not run; four environment-dependent shell tests were filtered.
+Isolated application-vault, askpass and RSA PEM import tests also passed. Coverage
+includes repeated restore after deletion, explicit re-add, unavailable keys,
+credential omission, encrypted mock WebDAV/Gitee sync and remote graphics policy.
+Native Windows/Linux runtime checks were not run on the macOS development host;
+automated platform checks and packaging run in the tag-triggered Release workflow.
 
 ## Packages
 
 - macOS arm64: ad-hoc signed, not Developer ID signed or Apple notarized.
 - Windows x86_64: no publisher code-signing certificate.
-- Linux x86_64: built on Debian 12; requires glibc 2.36 or newer.
+- Linux x86_64: tar, DEB, RPM and AppImage; built on Ubuntu 22.04 with a glibc 2.35 baseline.
 
 macOS may block the downloaded app with Gatekeeper. Windows may show
 an unknown-publisher or SmartScreen warning. Only run builds you trust;

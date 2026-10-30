@@ -14,6 +14,8 @@ mod config;
 mod credential_tests;
 mod credentials;
 mod crypto;
+#[cfg(test)]
+mod deletion_tests;
 mod gitee;
 #[cfg(test)]
 mod key_tests;
@@ -21,6 +23,8 @@ pub use config::{Gitee, Provider, SyncSettings};
 #[cfg(test)]
 mod flow_tests;
 pub mod page;
+#[cfg(test)]
+mod partial_tests;
 mod saved;
 pub mod service;
 #[cfg(test)]
@@ -87,20 +91,25 @@ pub struct Request {
 pub struct Restored {
     pub before: Vec<Host>,
     pub before_next_id: u64,
+    pub(crate) before_deleted: std::collections::BTreeSet<super::deleted::Deletion>,
     pub connections: Connections,
     pub hosts: usize,
     pub keys: usize,
     pub credentials: usize,
+    pub warnings: Vec<String>,
 }
 
 impl Restored {
     pub fn apply(self, current: &mut Connections) -> anyhow::Result<()> {
         ensure!(
-            current.hosts == self.before && current.next_id == self.before_next_id,
+            current.hosts == self.before
+                && current.next_id == self.before_next_id
+                && current.deleted_hosts == self.before_deleted,
             "SSH sync: local hosts changed during synchronization; retry to include those changes"
         );
         current.hosts = self.connections.hosts;
         current.next_id = self.connections.next_id;
+        current.deleted_hosts = self.connections.deleted_hosts;
         for recent in &mut current.recent {
             if self
                 .before
@@ -147,13 +156,13 @@ fn synchronize_with(
     remote: Remote,
     store: &impl credentials::Store,
 ) -> anyhow::Result<Restored> {
+    let mut warnings = Vec::new();
     let local = if request.restore_only {
         None
     } else {
-        let mut local = Archive::capture(&request.local)?;
-        if request.include_credentials {
-            local.capture_credentials(&request.local, store)?;
-        }
+        let (local, notices) =
+            Archive::capture_available(&request.local, store, request.include_credentials)?;
+        warnings.extend(notices);
         Some(local)
     };
     let mut etag = None;
@@ -184,10 +193,10 @@ fn synchronize_with(
             }
         }
     }
-    let hosts = archive.hosts.len();
-    let keys = archive.keys.len();
+    let (hosts, keys) = archive.visible_counts(&request.local);
     let before = request.local.hosts.clone();
     let before_next_id = request.local.next_id;
+    let before_deleted = request.local.deleted_hosts.clone();
     let mut connections = archive.restore(request.local, &request.key_folder)?;
     let credentials = if request.include_credentials {
         archive.restore_credentials(&mut connections, store)?
@@ -197,9 +206,11 @@ fn synchronize_with(
     Ok(Restored {
         before,
         before_next_id,
+        before_deleted,
         connections,
         hosts,
         keys,
         credentials,
+        warnings,
     })
 }

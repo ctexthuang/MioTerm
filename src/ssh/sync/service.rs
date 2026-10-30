@@ -142,7 +142,7 @@ pub(super) fn import_native(cx: &mut App) -> anyhow::Result<()> {
                 if complete {
                     changed(cx);
                 }
-                finish(Ok(text.clone()), false, cx);
+                finish(Ok((Severity::Success, text.clone())), false, cx);
                 if !complete {
                     let service = cx.global_mut::<SyncService>();
                     service.needs_import = true;
@@ -257,11 +257,16 @@ fn launch(
     Ok(())
 }
 
-fn apply(restored: Option<Restored>, automatic: bool, cx: &mut App) -> anyhow::Result<String> {
+fn apply(
+    restored: Option<Restored>,
+    automatic: bool,
+    cx: &mut App,
+) -> anyhow::Result<(Severity, String)> {
     let Some(restored) = restored else {
-        return Ok("Synchronization settings saved.".into());
+        return Ok((Severity::Success, "Synchronization settings saved.".into()));
     };
     let (hosts, keys, credentials) = (restored.hosts, restored.keys, restored.credentials);
+    let warnings = restored.warnings.clone();
     HostStore::update(cx, |local| restored.apply(local))?;
     cx.global_mut::<SyncService>().hosts = HostStore::get(cx).hosts.clone();
     let prefix = if automatic {
@@ -269,27 +274,30 @@ fn apply(restored: Option<Restored>, automatic: bool, cx: &mut App) -> anyhow::R
     } else {
         ""
     };
-    Ok(format!(
-        "{prefix}Merged {hosts} hosts, {keys} private keys and {credentials} credentials. Deletions are not propagated."
-    ))
+    let mut message = format!(
+        "{prefix}Merged {hosts} hosts, {keys} private keys and {credentials} credentials. Locally deleted hosts stay hidden; cloud history is retained."
+    );
+    let severity = if warnings.is_empty() {
+        Severity::Success
+    } else {
+        message.push('\n');
+        message.push_str(&warnings.join("\n"));
+        Severity::Warning
+    };
+    Ok((severity, message))
 }
 
-fn finish(result: anyhow::Result<String>, automatic: bool, cx: &mut App) {
+fn finish(result: anyhow::Result<(Severity, String)>, automatic: bool, cx: &mut App) {
     let service = cx.global_mut::<SyncService>();
     service.busy = false;
-    service.needs_import = result
-        .as_ref()
-        .err()
-        .is_some_and(|error| error.is::<super::credentials::MissingPasswords>());
+    service.needs_import = false;
     if automatic {
-        service
-            .queue
-            .finished(result.is_ok(), !service.needs_import, Instant::now());
+        service.queue.finished(result.is_ok(), Instant::now());
     }
     service.status = Some(match result {
-        Ok(message) => {
+        Ok((severity, message)) => {
             log::info!("SSH sync: {message}");
-            (Severity::Success, message)
+            (severity, message)
         }
         Err(error) => {
             log::error!("SSH sync: operation failed: {error:#}");
