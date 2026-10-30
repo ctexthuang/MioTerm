@@ -1,0 +1,2 @@
+assets/shell-integration/** text eol=lf
+vendor/conpty/LICENSE whitespace=cr-at-eol

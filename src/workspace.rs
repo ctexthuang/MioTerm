@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use ely_gpui_component::{
     buttons::{ButtonVariant, IconButton},
+    i18n::text,
     primitives::{FocusScope, IconName},
     shell::{ColumnShell, ResizeBorder, ShellColumn},
     theme::ControlSize,
@@ -14,12 +15,12 @@ use gpui::{
 
 use crate::{
     blur::Blur,
-    files::Files,
+    files::{Files, Here},
     git::panel::{Acted, GitPanel},
     menus,
     monitor::MonitorPanel,
     sessions::{self, Session, orb},
-    settings::{Settings, SettingsStore, window::OpenSettings},
+    settings::{SettingsStore, window::OpenSettings},
     ssh::panel::{Connect, HostPanel},
     term::{Events, Launch, Pty, TerminalView},
 };
@@ -29,8 +30,12 @@ mod events;
 mod panel;
 mod remote;
 mod rename;
+mod reorder;
+mod session;
+mod toggles;
 mod widths;
 
+use toggles::column_toggle;
 use widths::Dragged;
 
 actions!(
@@ -108,6 +113,7 @@ pub struct Workspace {
     _settings: Subscription,
     _acted: Subscription,
     _remote_folder: Subscription,
+    _here: Subscription,
 }
 
 impl Workspace {
@@ -142,11 +148,15 @@ impl Workspace {
                 this.files.update(cx, |files, cx| files.show(&folder, cx));
             }
         });
+        let files = cx.new(|_| Files::new(launch.cwd.clone()));
+        let here = cx.subscribe_in(&files, window, |this, _, Here(folder), window, cx| {
+            this.here(folder.clone(), window, cx)
+        });
         let mut workspace = Self {
             focus: cx.focus_handle(),
             sessions: Vec::new(),
             active: 0,
-            files: cx.new(|_| Files::new(launch.cwd.clone())),
+            files,
             remote_files,
             git,
             hosts,
@@ -163,6 +173,7 @@ impl Workspace {
             }),
             _acted: acted,
             _remote_folder: remote_folder,
+            _here: here,
         };
         workspace.add(pty, events, launch, window, cx);
         workspace.select(0, window, cx);
@@ -182,6 +193,10 @@ impl Workspace {
         let events = cx.subscribe_in(&terminal, window, move |this, _, event, window, cx| {
             this.session_event(id, event, window, cx)
         });
+        let shell = launch
+            .program
+            .as_ref()
+            .map_or_else(String::new, |(program, _)| program.clone());
         let pid = terminal.read(cx).pid();
         log::info!("app: session {pid} opens in {}", launch.cwd.display());
         self.sessions.push(Session {
@@ -190,6 +205,7 @@ impl Workspace {
             name: String::new(),
             editing: None,
             folder: launch.cwd,
+            shell,
             reports: launch.reports,
             bell: false,
             waiting: false,
@@ -237,13 +253,15 @@ impl Workspace {
         {
             hidden.terminal.update(cx, |view, cx| {
                 view.let_go(cx);
-                view.set_front(false);
+                view.set_front(false, window);
             });
         }
         let session = &mut self.sessions[index];
         session.bell = false;
         session.waiting = false;
-        session.terminal.update(cx, |view, _| view.set_front(true));
+        session
+            .terminal
+            .update(cx, |view, _| view.set_front(true, window));
         window.focus(&session.terminal.focus_handle(cx), cx);
         self.active = index;
         self.follow_files(cx);
@@ -260,6 +278,10 @@ impl Workspace {
         }
         let session = self.sessions.remove(index);
         log::info!("app: session {} closes", session.terminal.read(cx).pid());
+        // Its textures leave the window's atlas with it.
+        session
+            .terminal
+            .update(cx, |view, _| view.set_front(false, window));
         if self.sessions.is_empty() {
             log::info!("app: no session left; the window closes");
             window.remove_window();
@@ -292,43 +314,12 @@ impl Workspace {
         }
     }
 
-    /// Shows or hides a side column, as the settings keep it.
-    fn toggle(&mut self, flip: fn(&mut Settings), cx: &mut Context<Self>) {
-        match SettingsStore::update(cx, flip) {
-            Ok(()) => {
-                let settings = SettingsStore::get(cx);
-                let shown = |on: bool| if on { "shown" } else { "hidden" };
-                log::info!(
-                    "app: sessions {}, right column {}",
-                    shown(settings.show_sessions),
-                    shown(settings.show_panel)
-                );
-            }
-            Err(error) => log::error!("app: the columns stay: {error:#}"),
-        }
-    }
-
     /// Shows the next session, or the one before, round the ends.
     fn step(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.sessions.len();
         let by = if forward { 1 } else { count - 1 };
         self.select((self.active + by) % count, window, cx);
     }
-}
-
-/// A header button that hides or shows a column, saved.
-fn column_toggle(
-    workspace: &Entity<Workspace>,
-    (id, icon): (&'static str, IconName),
-    tip: String,
-    flip: fn(&mut Settings),
-) -> IconButton {
-    let workspace = workspace.clone();
-    IconButton::new(id, icon)
-        .variant(ButtonVariant::Ghost)
-        .size(ControlSize::Sm)
-        .tooltip(tip)
-        .on_click(move |_, _, cx| workspace.update(cx, |this, cx| this.toggle(flip, cx)))
 }
 
 impl Render for Workspace {
@@ -338,27 +329,33 @@ impl Render for Workspace {
         self.tick(now, cx);
         let settings = SettingsStore::get(cx);
         let workspace = cx.entity();
-        let tip =
-            |shown: bool, what: &str| format!("{} {what}", if shown { "Hide" } else { "Show" });
         // It leads the first column or ends the last.
         let left = column_toggle(
             &workspace,
             ("toggle-sessions", IconName::PanelLeft),
-            tip(settings.show_sessions, "left panel"),
+            (
+                settings.show_sessions,
+                ["et.tip.hide_sessions", "et.tip.show_sessions"],
+            ),
             |settings| settings.show_sessions = !settings.show_sessions,
+            cx,
         );
         let right = column_toggle(
             &workspace,
             ("toggle-panel", IconName::PanelRight),
-            tip(settings.show_panel, "right panel"),
+            (
+                settings.show_panel,
+                ["et.tip.hide_panel", "et.tip.show_panel"],
+            ),
             |settings| settings.show_panel = !settings.show_panel,
+            cx,
         );
         // No menu bar off macOS: a gear opens Settings.
         let gear = (!cfg!(target_os = "macos")).then(|| {
             IconButton::new("open-settings", IconName::Settings)
                 .variant(ButtonVariant::Ghost)
                 .size(ControlSize::Sm)
-                .tooltip("Settings")
+                .tooltip(text(cx, "et.settings.title", &[]))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx))
         });
         let end = div()

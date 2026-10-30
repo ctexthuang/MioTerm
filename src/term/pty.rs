@@ -1,4 +1,9 @@
-use std::{borrow::Cow, collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 #[cfg(windows)]
 use alacritty_terminal::tty;
@@ -11,7 +16,16 @@ use alacritty_terminal::{
 };
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 
-use super::{drop::Quote, marks::Mark, mouse::MouseMode, notify::Ask, status::Status, tap::Tapped};
+use super::{
+    clipboard::Packet,
+    drop::Quote,
+    graphics::{Graphics, Shared},
+    marks::Mark,
+    mouse::MouseMode,
+    notify::Ask,
+    status::{Holder, Status},
+    tap::Tapped,
+};
 use crate::settings::{CursorStyle, Settings};
 
 /// What a session hears from its pty.
@@ -21,15 +35,18 @@ pub enum PtyEvent {
     Folder(PathBuf),
     RemoteFolder(PathBuf),
     Mouse(MouseMode),
-    Mark(Mark),
-    /// A program's status, OSC 7501.
-    Status(Status),
-    /// A notification or progress, OSC 9, 777 or 99.
-    Ask(Ask),
+    /// An OSC 133 mark, and who held the terminal then.
+    Mark(Mark, Holder),
+    /// OSC 7501 status, with the group holding the terminal then.
+    Status(Status, Option<i32>),
+    /// OSC 9, 777 or 99, with the terminal's group then.
+    Ask(Ask, Option<i32>),
     /// A title a program set, in the output's order: OSC 0 or 2, or the title stack's pop.
     Title(String),
     /// A full reset, `ESC c`.
     Reset,
+    /// kitty's clipboard protocol, OSC 5522.
+    Clipboard(Packet),
     /// win32-input-mode set or reset.
     #[cfg(windows)]
     Win32(bool),
@@ -71,6 +88,8 @@ pub struct Pty {
     pub term: Arc<FairMutex<Term<Listener>>>,
     pub pid: u32,
     pub quote: Quote,
+    /// Its kitty graphics: the parser writes them, the view draws.
+    pub graphics: Arc<Mutex<Shared>>,
     notifier: Notifier,
     #[cfg(unix)]
     master: std::fs::File,
@@ -110,14 +129,32 @@ pub fn spawn(
     cell: (u16, u16),
     config: Config,
 ) -> anyhow::Result<(Pty, Events)> {
-    let mut env = HashMap::from([
-        ("TERM".to_string(), "xterm-256color".to_string()),
-        ("COLORTERM".to_string(), "truecolor".to_string()),
-    ]);
-    if std::env::var_os("LANG").is_none() {
-        env.insert("LANG".into(), "en_US.UTF-8".into());
-    }
-    env.extend(launch.env.iter().cloned());
+    // Windows reads the registry afresh, so a folder added since this process opened still reaches a session.
+    #[cfg(windows)]
+    let env = {
+        let mut env = super::env::fresh()?;
+        env.set("TERM", "xterm-256color".into());
+        env.set("COLORTERM", "truecolor".into());
+        if env.get("LANG").is_none() {
+            env.set("LANG", "en_US.UTF-8".into());
+        }
+        for (name, value) in &launch.env {
+            env.set(name, value.clone());
+        }
+        env.into_map()
+    };
+    #[cfg(not(windows))]
+    let env = {
+        let mut env = HashMap::from([
+            ("TERM".to_string(), "xterm-256color".to_string()),
+            ("COLORTERM".to_string(), "truecolor".to_string()),
+        ]);
+        if std::env::var_os("LANG").is_none() {
+            env.insert("LANG".into(), "en_US.UTF-8".into());
+        }
+        env.extend(launch.env.iter().cloned());
+        env
+    };
     let size = fit(columns, lines, cell);
     let raw = start(launch, env, size).map_err(|error| {
         anyhow::anyhow!(
@@ -142,14 +179,17 @@ pub fn spawn(
         pid,
     };
     let grid = TermSize::new(size.num_cols.into(), size.num_lines.into());
-    let term = Arc::new(FairMutex::new(Term::new(config, &grid, listener.clone())));
-    let event_loop = EventLoop::new(
-        term.clone(),
-        listener,
-        Tapped::new(raw, sender, pid),
-        true,
-        false,
-    )?;
+    let mut term = Term::new(config, &grid, listener.clone());
+    let graphics = Graphics::new(pid, (size.num_cols.into(), size.num_lines.into()), cell);
+    let shared = graphics.shared();
+    term.set_graphics(Box::new(graphics));
+    let term = Arc::new(FairMutex::new(term));
+    let tapped = Tapped::new(raw, sender, pid);
+    #[cfg(unix)]
+    let tapped = tapped.holding(master.try_clone().map_err(|error| {
+        anyhow::anyhow!("pty {pid}: no copy of the master for the tap: {error}")
+    })?);
+    let event_loop = EventLoop::new(term.clone(), listener, tapped, true, false)?;
     let notifier = Notifier(event_loop.channel());
     event_loop.spawn();
     Ok((
@@ -157,6 +197,7 @@ pub fn spawn(
             term,
             pid,
             quote: launch.quote,
+            graphics: shared,
             notifier,
             #[cfg(unix)]
             master,
@@ -173,19 +214,72 @@ fn start(launch: &Launch, env: HashMap<String, String>, size: WindowSize) -> std
 #[cfg(windows)]
 fn start(launch: &Launch, env: HashMap<String, String>, size: WindowSize) -> std::io::Result<Raw> {
     let options = tty::Options {
-        shell: launch
-            .program
-            .clone()
-            .map(|(program, args)| tty::Shell::new(program, args)),
+        shell: launch.program.clone().map(|(program, args)| {
+            // alacritty puts the program into the command line as it is, and Windows reads the first word of it, so a path with a space needs its quotes.
+            let program = if program.contains(' ') {
+                format!("\"{program}\"")
+            } else {
+                program
+            };
+            tty::Shell::new(program, args)
+        }),
         working_directory: Some(launch.cwd.clone()),
         drain_on_exit: true,
         env,
         escape_args: true,
     };
-    tty::new(&options, size, 0)
+    let pty = tty::new(&options, size, 0)?;
+    let dll = conpty()?;
+    log::info!("pty: ConPTY is {}", dll.display());
+    Ok(pty)
+}
+
+/// The `conpty.dll` alacritty loaded; it must be the bundled one.
+#[cfg(windows)]
+fn conpty() -> std::io::Result<PathBuf> {
+    use std::{io, os::windows::ffi::OsStringExt};
+    use windows_sys::{
+        Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW},
+        w,
+    };
+    // SAFETY: a module name, no ownership taken.
+    let module = unsafe { GetModuleHandleW(w!("conpty.dll")) };
+    if module.is_null() {
+        return Err(io::Error::other(
+            "pty: Windows' own conhost runs the session; no conpty.dll loaded",
+        ));
+    }
+    let mut name = [0u16; 32768];
+    // SAFETY: the buffer's length bounds the write.
+    let n = unsafe { GetModuleFileNameW(module, name.as_mut_ptr(), name.len() as u32) } as usize;
+    if n == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let loaded = PathBuf::from(std::ffi::OsString::from_wide(&name[..n]));
+    let beside = std::env::current_exe()?.with_file_name("conpty.dll");
+    if loaded.canonicalize()? != beside.canonicalize()? {
+        return Err(io::Error::other(format!(
+            "pty: conpty.dll came from {}, not {}",
+            loaded.display(),
+            beside.display()
+        )));
+    }
+    let console = loaded.with_file_name("OpenConsole.exe");
+    if !console.is_file() {
+        return Err(io::Error::other(format!(
+            "pty: no {} beside conpty.dll",
+            console.display()
+        )));
+    }
+    Ok(loaded)
 }
 
 impl Pty {
+    /// Its kitty graphics, locked after the term, as the parser.
+    pub fn graphics(&self) -> std::sync::MutexGuard<'_, Shared> {
+        self.graphics.lock().expect("graphics: a holder panicked")
+    }
+
     /// Sends bytes to the program, as typing does.
     pub fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
         self.notifier.notify(bytes);
@@ -203,10 +297,9 @@ impl Pty {
 
 #[cfg(unix)]
 impl Pty {
-    /// The process group the program runs in the foreground.
-    pub fn foreground(&self) -> std::io::Result<i32> {
-        let group = rustix_openpty::rustix::termios::tcgetpgrp(&self.master)?;
-        Ok(group.as_raw_nonzero().get())
+    /// The foreground process group; none once none holds the terminal.
+    pub fn foreground(&self) -> std::io::Result<Option<i32>> {
+        super::unix::foreground(&self.master)
     }
 }
 
@@ -263,6 +356,9 @@ pub fn fit(columns: usize, lines: usize, cell: (u16, u16)) -> WindowSize {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(all(test, windows))]
+mod through_conpty;
 
 #[cfg(test)]
 mod scrollback {

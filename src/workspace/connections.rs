@@ -5,6 +5,7 @@ use ely_gpui_component::{
     feedback::Alert,
     lists::List,
     menus::{Menu, MenuItem, OverflowMenu},
+    motion::Reorder,
     primitives::{IconName, Severity},
     shell::ShellColumn,
     theme::ControlSize,
@@ -17,13 +18,9 @@ use gpui::{
 use super::{Workspace, panel::tab_button, widths::Side};
 use crate::{
     sessions,
-    settings::{SettingsStore, StartIn},
+    settings::SettingsStore,
     ssh::{Host, HostStore, control::Control},
-    term::{
-        config,
-        shell::{ShellIntegration, launch},
-        spawn,
-    },
+    term::{config, spawn},
 };
 
 impl Workspace {
@@ -48,39 +45,23 @@ impl Workspace {
         self.monitor.update(cx, |panel, cx| panel.show(target, cx));
     }
 
-    pub(super) fn new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(home) = dirs::home_dir() else {
-            log::error!("app: no home folder, so no new session");
-            return;
-        };
-        let settings = SettingsStore::get(cx);
-        let folder = match settings.start_in {
-            StartIn::Home => home,
-            StartIn::Session => self
-                .sessions
-                .get(self.active)
-                .filter(|session| session.remote.is_none())
-                .map_or(home, |session| session.folder.clone()),
-        };
-        let started = launch(&settings.shell, folder, &cx.global::<ShellIntegration>().0)
-            .and_then(|launch| Ok((spawn(&launch, (80, 24), (8, 16), config(settings))?, launch)));
-        match started {
-            Ok(((pty, events), launch)) => {
-                self.sidebar_hosts = false;
-                self.add(pty, events, launch, window, cx);
-                self.select(self.sessions.len() - 1, window, cx);
-            }
-            Err(error) => log::error!("app: no new session: {error:#}"),
-        }
+    pub(super) fn connect(&mut self, host: Host, window: &mut Window, cx: &mut Context<Self>) {
+        self.connect_at(host, None, window, cx);
     }
 
-    pub(super) fn connect(&mut self, host: Host, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn connect_at(
+        &mut self,
+        host: Host,
+        folder: Option<crate::ssh::files::RemotePath>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let started = (|| {
             let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("ssh: no home directory"))?;
             let mut launch = host.launch(home)?;
             let control = Control::new()?;
             control.configure(&mut launch);
-            crate::ssh::shell::configure(&mut launch)?;
+            crate::ssh::shell::configure(&mut launch, folder.as_ref())?;
             let opened_at = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_err(|error| anyhow::anyhow!("ssh: cannot read clock: {error}"))?
@@ -181,17 +162,41 @@ impl Workspace {
         });
         let home = dirs::home_dir();
         let workspace = cx.entity();
-        let rows = self.sessions.iter().enumerate().map(|(index, session)| {
-            sessions::row(
-                &workspace,
-                index,
-                session,
-                index == self.active,
-                home.as_deref(),
-                now,
-                cx,
-            )
-        });
+        let rows = self
+            .sessions
+            .iter()
+            .enumerate()
+            .map(|(index, session)| {
+                let row = sessions::row(
+                    &workspace,
+                    index,
+                    session,
+                    index == self.active,
+                    home.as_deref(),
+                    now,
+                    cx,
+                );
+                (
+                    session.terminal.entity_id().as_u64().to_string(),
+                    row.into_any_element(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let list = if SettingsStore::get(cx).drag_sessions {
+            let dragged = workspace.clone();
+            rows.into_iter()
+                .fold(
+                    Reorder::new("session-rows").on_reorder(move |from, to, _, cx| {
+                        dragged.update(cx, |this, cx| this.reorder(from, to, cx))
+                    }),
+                    |list, (key, row)| list.row(key, div().pb_0p5().child(row)),
+                )
+                .into_any_element()
+        } else {
+            List::new()
+                .children(rows.into_iter().map(|(_, row)| row))
+                .into_any_element()
+        };
         let error = self.ssh_error.as_ref().map(|error| {
             let dismiss = cx.entity();
             Alert::new("ssh-spawn-error", Severity::Danger, "SSH could not start")
@@ -210,7 +215,7 @@ impl Workspace {
                 .id("sessions")
                 .size_full()
                 .overflow_y_scroll()
-                .child(List::new().children(rows))
+                .child(list)
                 .into_any_element()
         };
         let list = div()

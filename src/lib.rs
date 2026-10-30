@@ -2,6 +2,7 @@ pub mod app;
 pub mod blur;
 pub mod files;
 pub mod git;
+pub mod i18n;
 pub mod menus;
 pub mod monitor;
 pub mod pet;
@@ -9,7 +10,7 @@ pub mod sessions;
 pub mod settings;
 pub mod ssh;
 pub mod term;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod testlog;
 #[cfg(all(test, target_os = "linux"))]
 mod testx11;

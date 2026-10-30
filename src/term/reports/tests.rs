@@ -1,4 +1,5 @@
 use super::*;
+use crate::{i18n, settings::Language};
 
 fn notice(id: Option<&str>, title: &str, body: &str) -> Notice {
     Notice {
@@ -77,9 +78,24 @@ fn a_session_keeps_its_last_64_notifications() {
 fn a_notification_says_its_text_as_text() {
     let asked = notice(None, "Build\u{202e} done", "Line 1\n\nLine 2\u{200b}");
     assert_eq!(said(&asked), "Build done\nLine 1\nLine 2");
-    assert_eq!(finished(Some(0)), "Command finished");
-    assert_eq!(finished(None), "Command finished");
-    assert_eq!(finished(Some(2)), "Command exited with 2");
+    let english = i18n::catalogs(Language::English);
+    assert_eq!(finished(Some(0), &english), "Command finished");
+    assert_eq!(finished(None, &english), "Command finished");
+    assert_eq!(finished(Some(2), &english), "Command exited with 2");
+    let chinese = i18n::catalogs(Language::SimplifiedChinese);
+    assert_eq!(finished(Some(2), &chinese), "命令以 2 退出");
+}
+
+#[test]
+fn a_command_posts_its_end_once_it_ran_5_seconds() {
+    let start = Instant::now();
+    assert!(!ran_long(start, start), "no time ran");
+    let under = start + Duration::from_secs(5) - Duration::from_nanos(1);
+    assert!(!ran_long(start, under), "just under stays quiet");
+    assert!(
+        ran_long(start, start + Duration::from_secs(5)),
+        "the boundary tells"
+    );
 }
 
 #[test]

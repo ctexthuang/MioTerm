@@ -51,25 +51,24 @@ fn run(script: &str, size: (usize, usize)) -> Ran {
         while let Some(event) = events.next().await {
             match event {
                 PtyEvent::Folder(folder) => folders.push(folder),
-                PtyEvent::RemoteFolder(folder) => {
-                    said.push(format!("remote folder {}", folder.display()))
-                }
-                PtyEvent::Mark(mark) => marks.push(mark),
-                PtyEvent::Status(status) => statuses.push(Some(status)),
+                PtyEvent::Mark(mark, _) => marks.push(mark),
+                PtyEvent::Status(status, _) => statuses.push(Some(status)),
                 PtyEvent::Reset => {
                     said.push("reset".to_string());
                     statuses.push(None);
                 }
                 PtyEvent::Title(title) => said.push(format!("title {title}")),
-                PtyEvent::Ask(ask) => {
+                PtyEvent::Clipboard(packet) => said.push(format!("clipboard {packet:?}")),
+                PtyEvent::Ask(ask, _) => {
                     if let Ask::Show(notice) = &ask {
                         said.push(format!("show {}", notice.title));
                     }
                     asks.push(ask);
                 }
                 PtyEvent::Term(Event::ChildExit(status)) => success = status.success(),
+                PtyEvent::Term(Event::PtyWrite(reply)) => pty.write(reply.into_bytes()),
                 PtyEvent::Term(Event::Exit) => break,
-                PtyEvent::Term(_) | PtyEvent::Mouse(_) => {}
+                PtyEvent::Term(_) | PtyEvent::Mouse(_) | PtyEvent::RemoteFolder(_) => {}
             }
         }
         (folders, marks, statuses, asks, said, success)
@@ -102,6 +101,37 @@ fn a_program_prints_into_the_grid_with_its_variables_and_id() {
     assert!(ran.folders.is_empty());
     assert_eq!(ran.text, format!("ely ok {}", ran.pid));
     assert!(ran.success);
+}
+
+#[test]
+fn a_kitty_graphics_command_reaches_its_handler_at_the_cursor() {
+    let ran = run(r"printf 'ab\033_Gi=1,a=q,q=2;AAAA\033\\cd'", (24, 4));
+    assert_eq!(ran.text, "abcd", "the command prints nothing");
+    let seen = format!("graphics {}: 16 bytes at 0, 2: i=1,a=q,q=2;AAAA", ran.pid);
+    assert!(crate::testlog::logged(&seen), "{seen}");
+    // A control inside the string's ST runs where it stands.
+    let ran = run(
+        r"printf 'ab\033_Gi=1,q=2\033\r\\cd\033_Gi=2,q=2\033\\'",
+        (24, 4),
+    );
+    assert_eq!(ran.text, "cd");
+    let seen = format!("graphics {}: 7 bytes at 0, 2: i=2,q=2", ran.pid);
+    assert!(crate::testlog::logged(&seen), "{seen}");
+}
+
+#[test]
+fn kitty_graphics_replies_reach_the_program_and_a_temporary_file_goes() {
+    use base64::Engine;
+    let file = std::env::temp_dir().join(format!("tty-graphics-protocol-{}", std::process::id()));
+    std::fs::write(&file, [1, 2, 3]).expect("written");
+    let path = base64::engine::general_purpose::STANDARD.encode(file.to_string_lossy().as_bytes());
+    // Raw, unechoed; a lost reply ends the read soon.
+    let script = format!(
+        r#"stty raw -echo min 0 time 10; printf '\033_Gi=31,s=1,v=1,a=q,f=24;AAAA\033\\\033_Gi=32,t=t,f=24,s=1,v=1;{path}\033\\'; r=$(dd bs=1 count=24 2>/dev/null | tr '\033' E); stty sane; printf '%s' "$r""#
+    );
+    let ran = run(&script, (40, 4));
+    assert_eq!(ran.text, r"E_Gi=31;OKE\E_Gi=32;OKE\");
+    assert!(!file.exists(), "the temporary file was deleted");
 }
 
 #[test]
@@ -250,7 +280,7 @@ fn the_foreground_is_the_program_s_own_group() {
     let (pty, _events) =
         spawn(&launch, (20, 4), (8, 16), config(&Settings::default())).expect("sh starts");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while pty.foreground().ok() != Some(pty.pid as i32) {
+    while pty.foreground().ok().flatten() != Some(pty.pid as i32) {
         assert!(
             std::time::Instant::now() < deadline,
             "{:?}",

@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use ely_gpui_component::i18n::I18n;
 use gpui::{Context, SharedString, SystemNotification};
 
 use super::{
@@ -14,6 +15,9 @@ use crate::{
 
 /// One notification a session every 3 seconds at most.
 const GAP: Duration = Duration::from_secs(3);
+
+/// The least a command runs before its end posts, as Ghostty's `notify-on-command-finish-after`.
+const RAN_FOR: Duration = Duration::from_secs(5);
 
 /// The notifications a session keeps for presses and answers; past them the oldest goes.
 const POSTED: usize = 64;
@@ -99,18 +103,18 @@ impl Notices {
 
 impl TerminalView {
     /// Keeps a program's report, drops what it clears, and answers its query.
-    pub(super) fn status(&mut self, status: Status) {
+    pub(super) fn status(&mut self, status: Status, owner: Option<i32>) {
         match status {
-            Status::Report(id, record) => self.records.report(id, record),
+            Status::Report(id, record) => self.records.report(id, record, owner),
             Status::Clear(id) => self.records.clear(id.as_deref()),
             Status::Query => self.pty.write(status::REPLY.as_bytes().to_vec()),
         }
     }
 
     /// Maps progress, answers the query and alive in order, and posts and closes notifications.
-    pub(super) fn ask(&mut self, ask: Ask, cx: &mut Context<Self>) {
+    pub(super) fn ask(&mut self, ask: Ask, owner: Option<i32>, cx: &mut Context<Self>) {
         match ask {
-            Ask::Progress(progress) => self.records.progress(progress),
+            Ask::Progress(progress) => self.records.progress(progress, owner),
             Ask::Query(id) => self.pty.write(notify::answer(&id).into_bytes()),
             Ask::Alive(id) => {
                 let alive = self.notices.alive();
@@ -143,7 +147,9 @@ impl TerminalView {
     /// Posts the state its row shows when it turned to waiting, done or error.
     fn tell_state(&mut self, cx: &mut Context<Self>) {
         let body = match self.records.shown() {
-            Some((id, record)) if tells(record.state) => line(&self.records, id, record),
+            Some((id, record)) if tells(record.state) => {
+                line(&self.records, id, record, cx.global::<I18n>())
+            }
             _ => return,
         };
         self.post(body, None, cx);
@@ -157,8 +163,16 @@ impl TerminalView {
         }
         self.ended = status;
         // Only a command C started posts its end, so a prompt bash 3.2 draws again posts nothing.
-        if std::mem::take(&mut self.ran) {
-            self.post(finished(status), None, cx);
+        if let Some(start) = std::mem::take(&mut self.ran) {
+            let now = Instant::now();
+            if ran_long(start, now) {
+                self.post(finished(status, cx.global::<I18n>()), None, cx);
+            } else {
+                log::debug!(
+                    "terminal {}: a command under {RAN_FOR:?} ran, so its end, {status:?}, posts nothing",
+                    self.pty.pid
+                );
+            }
         } else {
             log::debug!(
                 "terminal {}: an end without its start posts nothing",
@@ -299,12 +313,18 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Whether a command that ran from `start` to `now` ran long enough to post its end.
+fn ran_long(start: Instant, now: Instant) -> bool {
+    now.duration_since(start) >= RAN_FOR
+}
+
 /// What a command's end says: it finished, or the status it failed with.
-fn finished(status: Option<i32>) -> String {
+fn finished(status: Option<i32>, words: &I18n) -> String {
     match status {
-        Some(code) if code != 0 => format!("Command exited with {code}"),
-        _ => "Command finished".into(),
+        Some(code) if code != 0 => words.text("et.command.exited", &[("code", &code.to_string())]),
+        _ => words.text("et.command.finished", &[]),
     }
+    .to_string()
 }
 
 /// A program's notification as posted: its title, then its body, each line shown as text.

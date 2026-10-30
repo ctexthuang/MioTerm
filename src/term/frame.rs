@@ -115,7 +115,8 @@ pub fn frame<T: EventListener>(term: &Term<T>, ink: &Ink, lit: &[(Match, Hsla)])
         let spacer = cell
             .flags
             .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER);
-        let hidden = cell.flags.contains(Flags::HIDDEN);
+        // A placeholder's image draws over its cell; its glyph never.
+        let hidden = cell.flags.contains(Flags::HIDDEN) || cell.c == super::graphics::PLACEHOLDER;
         let marks = cell.zerowidth().filter(|marks| !marks.is_empty());
         let alone = (!hidden && (marks.is_some() || boxes::drawn(cell.c))).then(|| {
             std::iter::once(cell.c)
@@ -239,6 +240,18 @@ mod tests {
             frame.rows[0].text.chars().take(3).collect::<String>(),
             "中 a"
         );
+    }
+
+    #[test]
+    fn an_edit_that_splits_a_wide_char_clears_it_whole_in_the_erase_ground() {
+        let (frame, _) = shown("A单中BC\x1b[1;3H\x1b[2P".as_bytes());
+        assert_eq!(frame.text(), "A  BC");
+        let (frame, _) = shown("A单BC\x1b[1;3H\x1b[4hX".as_bytes());
+        assert_eq!(frame.text(), "A X BC");
+        let (frame, ink) = shown("A\x1b[44m单\x1b[0mBC\x1b[1;2H\x1b[42m\x1b[X".as_bytes());
+        assert_eq!(frame.text(), "A  BC");
+        let (bytes, ground) = frame.rows[0].runs[1];
+        assert_eq!((bytes, ground.bg), (2, Some(ink.ansi[2])));
     }
 
     #[test]

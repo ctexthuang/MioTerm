@@ -9,11 +9,17 @@ use std::{
 use ely_gpui_component::{
     data_display::Tone,
     lists::{GitStatus, Tree, TreeNode},
+    menus::{ContextMenu, Menu},
     primitives::IconName,
 };
-use gpui::{AppContext, Context, IntoElement, Render, SharedString, Styled, Task, Window};
+use gpui::{
+    AppContext, Context, EventEmitter, IntoElement, ParentElement, Pixels, Point, Render,
+    SharedString, Styled, Task, Window,
+};
 
-use crate::{git, sessions};
+use crate::{git, sessions, settings::SettingsStore};
+
+mod menu;
 
 /// A folder's entry: its name, and whether it is a folder, links followed.
 #[derive(Debug, PartialEq)]
@@ -107,6 +113,29 @@ fn key(path: &Path) -> SharedString {
     }
 }
 
+/// New session here's folder: itself, or a file's parent.
+pub(super) fn here_folder(path: &Path, folder: bool) -> PathBuf {
+    if folder {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .expect("a listed file lies in a folder")
+            .to_path_buf()
+    }
+}
+
+/// New session here: the folder it starts in.
+pub struct Here(pub PathBuf);
+
+/// A right press waiting to open Files' menu.
+struct MenuAsk {
+    n: u64,
+    /// The press's point, until a render hands it on.
+    at: Option<Point<Pixels>>,
+    path: PathBuf,
+    here: PathBuf,
+}
+
 /// The Files panel: the shown session's folder as a tree, Git's marks on names.
 pub struct Files {
     root: PathBuf,
@@ -120,7 +149,10 @@ pub struct Files {
     dirty: HashSet<PathBuf>,
     reading: Task<()>,
     checking: Task<()>,
+    menu: Option<MenuAsk>,
 }
+
+impl EventEmitter<Here> for Files {}
 
 impl Files {
     pub fn new(root: PathBuf) -> Self {
@@ -133,6 +165,7 @@ impl Files {
             dirty: HashSet::new(),
             reading: Task::ready(()),
             checking: Task::ready(()),
+            menu: None,
         }
     }
 
@@ -218,17 +251,46 @@ impl Files {
         }
     }
 
+    /// Opens the menu for tree key `of` at the pointer.
+    fn ask(&mut self, of: &str, at: Point<Pixels>, cx: &mut Context<Self>) {
+        match self.named(of) {
+            Some((path, folder)) => {
+                let n = self.menu.as_ref().map_or(0, |ask| ask.n).saturating_add(1);
+                log::info!("files: menu for {}", path.display());
+                self.menu = Some(MenuAsk {
+                    n,
+                    at: Some(at),
+                    here: here_folder(&path, folder),
+                    path,
+                });
+                cx.notify();
+            }
+            None => log::warn!("files: {of} to open a menu is gone"),
+        }
+    }
+
+    /// The menu's request, once: a remounted menu would replay it.
+    fn request(&mut self) -> Option<(u64, Point<Pixels>)> {
+        let ask = self.menu.as_mut()?;
+        Some((ask.n, ask.at.take()?))
+    }
+
     /// The path a tree key stands for: the root, or an entry read.
     fn path(&self, of: &str) -> Option<PathBuf> {
-        let entries = self.listings.iter().flat_map(|(folder, listing)| {
-            listing
-                .iter()
-                .flatten()
-                .map(|entry| folder.join(&entry.name))
-        });
-        std::iter::once(self.root.clone())
-            .chain(entries)
-            .find(|path| key(path).as_ref() == of)
+        self.named(of).map(|(path, _)| path)
+    }
+
+    /// A tree key's path, and whether it is a folder.
+    fn named(&self, of: &str) -> Option<(PathBuf, bool)> {
+        if key(&self.root).as_ref() == of {
+            return Some((self.root.clone(), true));
+        }
+        self.listings.iter().find_map(|(folder, listing)| {
+            listing.iter().flatten().find_map(|entry| {
+                let path = folder.join(&entry.name);
+                (key(&path).as_ref() == of).then_some((path, entry.folder))
+            })
+        })
     }
 
     /// Folder `path`'s node, its entries once read; `untracked` when an untracked folder holds it.
@@ -267,8 +329,8 @@ impl Render for Files {
             }
             _ => sessions::shown(&self.root, home.as_deref()),
         };
-        let (load, open) = (cx.entity(), cx.entity());
-        Tree::new(
+        let (load, open, asked) = (cx.entity(), cx.entity(), cx.entity());
+        let tree = Tree::new(
             ("files", self.generation),
             [self.folder(&self.root, label, false)],
         )
@@ -285,8 +347,22 @@ impl Render for Files {
                 cx.open_with_system(&path)
             }
             None => log::warn!("files: {key} to open is gone"),
-        })
-        .size_full()
+        });
+        if !SettingsStore::get(cx).files_menu {
+            return tree.size_full().into_any_element();
+        }
+        let tree = tree
+            .on_context(move |key, at, _, cx| asked.update(cx, |files, cx| files.ask(key, at, cx)));
+        let items = match &self.menu {
+            Some(ask) => menu::row(&cx.entity(), ask.path.clone(), ask.here.clone(), cx),
+            None => Menu::new(),
+        };
+        let request = self.request();
+        ContextMenu::new(("files-menu", self.generation), items)
+            .manual(request)
+            .size_full()
+            .child(tree.size_full())
+            .into_any_element()
     }
 }
 

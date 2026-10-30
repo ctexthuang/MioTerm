@@ -68,15 +68,13 @@ impl Backend {
                 });
         }
         let named = || format!("git: `git {}` in {}", line(args), folder.display());
-        let mut command = Command::new("git");
+        let mut command = command(folder);
         #[cfg(windows)]
         std::os::windows::process::CommandExt::creation_flags(
             &mut command,
             super::CREATE_NO_WINDOW,
         );
         let mut child = command
-            .arg("-C")
-            .arg(folder)
             .args(["--no-optional-locks", "--literal-pathspecs"])
             .args(args)
             .env("LC_ALL", "C")
@@ -101,6 +99,30 @@ impl Backend {
         }
         Ok(output)
     }
+}
+
+fn command(folder: &Path) -> Command {
+    #[cfg(windows)]
+    if let Some((share, inside)) = super::wsl::split(folder) {
+        let shared =
+            std::env::var("WSLENV").map_or("LC_ALL".into(), |list| format!("{list}:LC_ALL"));
+        let mut command = Command::new("wsl.exe");
+        command
+            .args([
+                "-d",
+                super::wsl::distro(share),
+                "--exec",
+                "git",
+                "-C",
+                &inside,
+            ])
+            .env("WSLENV", shared)
+            .env("WSL_UTF8", "1");
+        return command;
+    }
+    let mut command = Command::new("git");
+    command.arg("-C").arg(folder);
+    command
 }
 
 #[cfg(test)]

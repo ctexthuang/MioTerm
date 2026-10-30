@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MioTerm
+Comment=An SSH terminal based on ELYTerminal, GPUI and Ely
+Exec=elyterminal
+Icon=io.github.ctexthuang.mioterm
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupWMClass=io.github.ctexthuang.mioterm

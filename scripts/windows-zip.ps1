@@ -1,5 +1,4 @@
-# windows-zip.ps1: the release build, its icon inside, in a zip.
-$ErrorActionPreference = 'Stop'
+# windows-zip.ps1: the release build with icon and ConPTY, zipped.
 Set-Location (Join-Path $PSScriptRoot '..') -ErrorAction Stop
 cargo build --release --locked
 if ($LASTEXITCODE -ne 0) { throw "windows-zip: cargo build failed" }
@@ -10,17 +9,13 @@ if (-not $arch) { throw "windows-zip: no name for $env:PROCESSOR_ARCHITECTURE" }
 $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
 $out = Join-Path $target 'release'
 $zip = Join-Path $out "MioTerm-$version-windows-$arch.zip"
-$work = Join-Path ([IO.Path]::GetTempPath()) ("mioterm-" + [guid]::NewGuid())
-try {
-    New-Item -ItemType Directory -Path "$work/licenses/fonts", "$work/licenses/themes" | Out-Null
-    Copy-Item (Join-Path $out 'elyterminal.exe') (Join-Path $work 'MioTerm.exe')
-    Copy-Item LICENSE, LICENSE-GHOSTTY (Join-Path $work 'licenses')
-    Copy-Item assets/fonts/*LICENSE.txt (Join-Path $work 'licenses/fonts')
-    Copy-Item assets/themes/LICENSE (Join-Path $work 'licenses/themes')
-    Copy-Item README.md $work
-    Compress-Archive -Force -Path "$work/*" -DestinationPath $zip
-}
-finally {
-    if (Test-Path $work) { Remove-Item -Recurse -Force $work }
-}
+Copy-Item 'vendor/conpty/LICENSE' (Join-Path $out 'LICENSE-conpty') -ErrorAction Stop
+$files = 'elyterminal.exe', 'conpty.dll', 'OpenConsole.exe', 'LICENSE-conpty' | ForEach-Object { Join-Path $out $_ }
+$licenses = Join-Path $out 'licenses'
+New-Item -ItemType Directory -Path $licenses -Force -ErrorAction Stop | Out-Null
+Copy-Item 'LICENSE', 'LICENSE-GHOSTTY' -Destination $licenses -ErrorAction Stop
+Copy-Item 'assets/fonts/*LICENSE.txt' -Destination $licenses -ErrorAction Stop
+Copy-Item 'assets/themes/LICENSE' (Join-Path $licenses 'themes-LICENSE') -ErrorAction Stop
+$files += $licenses
+Compress-Archive -Force -Path $files -DestinationPath $zip -ErrorAction Stop
 Write-Output "windows-zip: $zip"

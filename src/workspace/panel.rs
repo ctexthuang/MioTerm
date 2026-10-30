@@ -1,5 +1,6 @@
 use ely_gpui_component::{
     buttons::{ButtonVariant, IconButton},
+    i18n::text,
     primitives::IconName,
     shell::ShellColumn,
     theme::ControlSize,
@@ -21,14 +22,25 @@ impl Workspace {
                 PanelTab::Monitor,
                 "panel-monitor",
                 IconName::Activity,
-                "System monitor",
+                "et.panel.monitor",
             ),
-            (PanelTab::Files, "panel-files", IconName::Folder, "Files"),
-            (PanelTab::Git, "panel-git", IconName::GitBranch, "Git"),
+            (
+                PanelTab::Files,
+                "panel-files",
+                IconName::Folder,
+                "et.panel.files",
+            ),
+            (
+                PanelTab::Git,
+                "panel-git",
+                IconName::GitBranch,
+                "et.panel.git",
+            ),
         ]
         .into_iter()
         .map(|(panel, id, icon, name)| {
-            tab_button(id, icon, name, tab == panel).on_click(move |_, _, cx| show_tab(panel, cx))
+            tab_button(id, icon, text(cx, name, &[]), tab == panel)
+                .on_click(move |_, _, cx| show_tab(panel, cx))
         });
         let session = self.sessions.get(self.active);
         let remote = session.is_some_and(|session| session.remote.is_some());
@@ -46,10 +58,11 @@ impl Workspace {
             .min_h_0()
             .flex()
             .flex_col()
-            .children(
-                (quiet && !remote)
-                    .then(|| Caption::new("This shell reports no folder.").px_3().pt_2()),
-            )
+            .children((quiet && !remote).then(|| {
+                Caption::new(text(cx, "et.panel.no_folder", &[]))
+                    .px_3()
+                    .pt_2()
+            }))
             .child(
                 body(tab == PanelTab::Git).p_2().child(
                     self.git
@@ -86,7 +99,7 @@ impl Workspace {
 pub(super) fn tab_button(
     id: &'static str,
     icon: IconName,
-    name: &'static str,
+    name: impl Into<gpui::SharedString>,
     selected: bool,
 ) -> IconButton {
     IconButton::new(id, icon)

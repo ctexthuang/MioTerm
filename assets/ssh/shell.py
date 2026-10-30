@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import pathlib
@@ -9,6 +10,8 @@ import tempfile
 
 def main():
     scripts = json.loads(sys.argv[1])
+    if len(sys.argv) > 2:
+        os.chdir(base64.b64decode(sys.argv[2], validate=True))
     shell = os.environ.get("SHELL") or pwd.getpwuid(os.getuid()).pw_shell
     name = pathlib.Path(shell).name
     if name not in ("zsh", "bash", "fish"):

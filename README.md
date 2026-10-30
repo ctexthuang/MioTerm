@@ -16,6 +16,8 @@
 
 当前 `Cargo.toml` 的版本号为 `0.0.8`，修改版仍在开发中。安装包通过本仓库的 Releases 发布，最新版本标记为 Latest；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
 
+当前开发代码已合并 ELYTerminal 0.2.0 的上游提交 [`6936b6f`](https://github.com/ELY-Open-Source/ELYTerminal/commit/6936b6f3edb5f55891dd62898290994f52e24dc0)。这次集成尚未创建新的 MioTerm 发布标签，已发布的 `v0.0.8` 安装包不包含本次上游更新。集成范围见 [上游同步记录](docs/upstream-integration.md)。
+
 ## 当前功能
 
 ### 本地终端与界面
@@ -24,11 +26,18 @@
 - 支持真彩色、宽字符、组合字符、鼠标报告、输入法、括号粘贴、OSC 8 链接和历史搜索。
 - 支持 xterm、kitty 键盘协议，以及 Windows 的 win32-input-mode。
 - 本地 shell 集成支持 zsh、bash、fish 和 PowerShell，报告当前目录、标题及命令状态。
-- 启动时本地终端位于当前用户主目录；后续新建本地会话可按设置从主目录或当前本地会话目录启动。
+- 本地终端默认从当前用户主目录启动，也可设置从指定文件夹或当前本地会话目录新建会话。
 - **每次启动时左右侧栏均默认收起**，点击标题栏两端的图标或使用快捷键再展开，不恢复上次的展开状态。
 - 左侧可切换会话与 SSH 主机；右侧通过图标切换监控、Files 和 Git，侧栏宽度支持拖动调整。
 - 保留上游的 Ely 桌面角色、会话状态标记、通知、主题、透明度与背景模糊。
 - 支持 Catppuccin Mocha 等内置主题，监控面板跟随应用主题，Mocha 的主要高亮使用粉色。
+- 设置中的上游终端界面支持英文、简体中文切换；MioTerm 新增的部分 SSH、监控和同步界面仍为英文。
+- 支持新建、编辑自定义主题、选择终端背景图，并记住窗口的显示器和位置。
+- 支持拖动会话排序和会话右键复制、关闭；复制 SSH 会话会重连原主机，并从已报告的远程目录启动。
+- 可在设置中启用本地 Files 右键菜单，提供打开、复制路径和在此处新建本地会话。
+- 支持 Kitty 图片协议与动画、OSC 5522 剪贴板协议；程序读取剪贴板前默认请求许可。
+- 历史记录空闲后压缩存储，采用上游的 ASCII 解析和文本绘制优化。
+- Windows 使用随包提供的 Microsoft OpenConsole / ConPTY，支持 WSL、Git Bash 目录集成及 Windows 11 Mica 背景。
 
 ### SSH 连接管理
 
@@ -150,8 +159,8 @@ Gitee 每次同步创建一个新的私密加密快照，不修改、删除旧�
 |---|---|
 | Rust | edition 2024；`rust-toolchain.toml` 固定 `1.95.0` |
 | GPUI | `gpui-pre` / `gpui-pre-platform`，固定 `0.3.8` |
-| Ely | `ely-gpui-component`，固定 Git revision `7f7a715` |
-| 终端引擎 | `alacritty_terminal`，固定 `0.26.0` |
+| Ely | `ely-gpui-component`，固定 Git revision `494c17d` |
+| 终端引擎 | `alacritty_terminal` `0.26.0`，使用上游固定 revision 的引擎与 `vte` 补丁 |
 | SSH / SFTP / Git | 系统命令行客户端 |
 | 同步与凭据 | `age`、`ureq` / rustls；`keyring` 仅用于显式导入旧版系统凭据 |
 
@@ -167,7 +176,7 @@ Windows、Linux：
 cargo run --locked --release
 ```
 
-本次 macOS 开发验证使用已安装的 Rust `1.99.0`，未更改仓库的工具链固定值。使用该工具链时，可将上述命令的 `cargo` 替换为 `rustup run 1.99.0 cargo`。
+本次上游集成使用仓库固定的 Rust `1.95.0` 完成 macOS 构建、Clippy 和回归测试。
 
 Linux 编译依赖，Debian / Ubuntu 示例：
 
@@ -180,7 +189,7 @@ sudo apt-get install pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11
 
 - macOS：`scripts/mac-app.sh`。
 - Windows：`scripts/windows-zip.ps1`。
-- Linux：`scripts/linux-tar.sh`，需要 Docker。
+- Linux：`scripts/linux-packages.sh`，需要 Docker，在 Ubuntu 22.04 构建 tar.gz、DEB、RPM、AppImage；也可单独运行 `scripts/linux-tar.sh`。
 
 macOS 打包默认使用 ad-hoc 签名，不包含 Developer ID 签名或 Apple 公证；Windows 测试包也没有发布者签名，系统可能提示安全警告。修改版发行入口为 [MioTerm Releases](https://github.com/ctexthuang/MioTerm/releases)，仅在发布构建后提供下载。安装包附带项目及现有第三方许可文件。
 
@@ -223,7 +232,7 @@ Settings > Terminal 中可查看当前平台的绑定。
 
 `scripts/check.sh` 包含格式、Clippy、测试和手写文件不超过 500 行的检查；目录结构与工程约定见 [AGENTS.md](AGENTS.md)。
 
-新增测试覆盖 SSH 参数与路径、凭据处理、远程目录报告、文件传输、Git 后端、监控数据及 WebDAV 加密恢复。真实 SSH 集成测试位于 `tests/remote_ssh.rs`，需要隔离的本地 SSH 服务并显式启用；`tests/ssh_auth.rs` 的系统凭据测试也需显式启用。运行前应阅读对应测试和功能文档，不要将测试指向生产主机。
+新增测试覆盖 SSH 参数与路径、凭据处理、远程目录报告、文件传输、Git 后端、监控数据及 WebDAV 加密恢复。`tests/ssh_auth.rs` 默认使用隔离应用目录验证加密凭据和 askpass，不读取真实用户凭据。真实 SSH 集成测试位于 `tests/remote_ssh.rs`，需要隔离的本地 SSH 服务并显式启用；`tests/ssh_auth.rs` 的真实密钥登录测试需设置对应 fixture 环境变量。运行前应阅读对应测试和功能文档，不要将测试指向生产主机。
 
 ### 仓库与上游同步
 
@@ -270,5 +279,6 @@ git push origin v0.0.8
 - 方框绘制与按键编码参考 Ghostty 的 MIT 代码，许可见 [LICENSE-GHOSTTY](LICENSE-GHOSTTY)。
 - 内置主题来自 iTerm2-Color-Schemes，许可保留在 `assets/themes`。
 - JetBrains Mono 及其 Nerd Font 版本采用 SIL Open Font License，许可保留在 `assets/fonts`。
+- Windows 随包携带 Microsoft ConPTY，MIT 许可保留在 `vendor/conpty`；Linux 包保留 FreeType 与 libX11 解码表的许可。
 
 终端引擎、基础界面和原有资源的贡献属于各自作者；本修改版仅在其基础上继续开发。

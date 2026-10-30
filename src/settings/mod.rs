@@ -2,7 +2,12 @@ mod folder;
 mod store;
 pub mod window;
 
-use std::{env, ffi::OsStr, ops::RangeInclusive, path::Path};
+use std::{
+    env,
+    ffi::OsStr,
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
@@ -12,13 +17,14 @@ use crate::themes;
 pub(crate) use folder::folder;
 pub use store::{SettingsStore, load, save};
 
-/// Where a new session starts.
+/// Where new sessions start: home, the shown folder, `start_folder`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StartIn {
     #[default]
     Home,
     Session,
+    Folder,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +48,35 @@ pub enum OptionAsAlt {
     Both,
 }
 
+/// What blurs behind a see-through window on Windows 11.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Backdrop {
+    #[default]
+    Acrylic,
+    Mica,
+    MicaAlt,
+}
+
+/// The interface's language, by the tag Ely's `I18n` names it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Language {
+    #[default]
+    #[serde(rename = "en-US")]
+    English,
+    #[serde(rename = "zh-CN")]
+    SimplifiedChinese,
+}
+
+impl Language {
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::English => "en-US",
+            Self::SimplifiedChinese => "zh-CN",
+        }
+    }
+}
+
 /// What the right panel shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,12 +91,19 @@ pub enum PanelTab {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
+    pub language: Language,
     /// A program path; empty runs the login shell.
     pub shell: String,
     pub start_in: StartIn,
+    /// Start in's Folder; empty until one is chosen.
+    pub start_folder: String,
     pub theme: String,
     /// The theme while the system is dark; none keeps `theme`.
     pub dark_theme: Option<String>,
+    /// Themes the user made, each from Ely Dark.
+    pub custom_themes: Vec<themes::CustomTheme>,
+    /// A picture under the terminal; empty for none.
+    pub background_image: String,
     pub font_family: String,
     /// Families tried in order for a character Font family lacks.
     pub font_fallbacks: Vec<String>,
@@ -72,10 +114,14 @@ pub struct Settings {
     pub cursor_blink: bool,
     pub background_opacity: f32,
     pub background_blur: bool,
+    /// Windows 11's backdrop while blurred.
+    pub backdrop: Backdrop,
     pub padding_x: f32,
     pub padding_y: f32,
     pub scrollback: u32,
     pub option_as_alt: OptionAsAlt,
+    /// Option and Command edit text by word and line, as macOS's text does.
+    pub natural_text_editing: bool,
     pub copy_on_select: bool,
     /// Ely peeks over the main window's top edge.
     pub ely: bool,
@@ -84,6 +130,12 @@ pub struct Settings {
     /// A check for a newer release at start and once a day.
     pub check_updates: bool,
     pub show_sessions: bool,
+    /// A drag moves a session's row in the list.
+    pub drag_sessions: bool,
+    /// A right press on a session's row opens its menu.
+    pub session_menu: bool,
+    /// A right press on a Files name opens its menu.
+    pub files_menu: bool,
     pub show_panel: bool,
     pub panel: PanelTab,
     /// The sessions and right columns' widths, in pixels, as their borders were dragged.
@@ -94,15 +146,30 @@ pub struct Settings {
     pub window_height: f32,
     pub webdav: crate::ssh::sync::WebDav,
     pub sync: crate::ssh::sync::SyncSettings,
+    /// Where the main window was left.
+    pub window_place: Option<Place>,
+}
+
+/// A display's gpui uuid, and the window's top-left from its origin.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Place {
+    pub display: String,
+    pub x: f32,
+    pub y: f32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            language: Language::English,
             shell: String::new(),
             start_in: StartIn::Home,
+            start_folder: String::new(),
             theme: themes::default_id().into(),
             dark_theme: None,
+            custom_themes: Vec::new(),
+            background_image: String::new(),
             font_family: "JetBrains Mono".into(),
             font_fallbacks: Vec::new(),
             font_size: 13.0,
@@ -112,21 +179,27 @@ impl Default for Settings {
             cursor_blink: true,
             background_opacity: 0.88,
             background_blur: true,
+            backdrop: Backdrop::Acrylic,
             padding_x: 10.0,
             padding_y: 8.0,
             scrollback: 10_000,
             option_as_alt: OptionAsAlt::Off,
+            natural_text_editing: false,
             copy_on_select: false,
             ely: true,
             ely_left: 140.0,
             check_updates: true,
             show_sessions: false,
+            drag_sessions: true,
+            session_menu: true,
+            files_menu: false,
             show_panel: false,
             panel: PanelTab::Git,
             sessions_width: 240.0,
             panel_width: 240.0,
             window_width: 1200.0,
             window_height: 760.0,
+            window_place: None,
             webdav: crate::ssh::sync::WebDav::default(),
             sync: crate::ssh::sync::SyncSettings::default(),
         }
@@ -141,6 +214,7 @@ pub const SCROLLBACK: RangeInclusive<u32> = 0..=100_000;
 pub const COLUMN: RangeInclusive<f32> = 160.0..=960.0;
 pub const WINDOW: RangeInclusive<f32> = 100.0..=16384.0;
 pub const ELY_LEFT: RangeInclusive<f32> = 0.0..=16384.0;
+pub const PLACE: RangeInclusive<f32> = -32768.0..=32768.0;
 
 impl Settings {
     /// Every value inside its range, every theme built in; the error names the field.
@@ -158,13 +232,35 @@ impl Settings {
         within("window_width", self.window_width, &WINDOW)?;
         within("window_height", self.window_height, &WINDOW)?;
         within("ely_left", self.ely_left, &ELY_LEFT)?;
+        if let Some(place) = &self.window_place {
+            anyhow::ensure!(!place.display.is_empty(), "window_place names no display");
+            within("window_place", place.x, &PLACE)?;
+            within("window_place", place.y, &PLACE)?;
+        }
         for (field, id) in [
             ("theme", Some(&self.theme)),
             ("dark_theme", self.dark_theme.as_ref()),
         ] {
             if let Some(id) = id {
-                anyhow::ensure!(themes::known(id), "{field} is {id:?}, no built-in theme");
+                let custom = self.custom_themes.iter().any(|theme| theme.id == *id);
+                anyhow::ensure!(
+                    themes::known(id) || custom,
+                    "{field} is {id:?}, no built-in or custom theme"
+                );
             }
+        }
+        for (at, theme) in self.custom_themes.iter().enumerate() {
+            theme.theme()?;
+            anyhow::ensure!(
+                !self.custom_themes[..at]
+                    .iter()
+                    .any(|other| other.id == theme.id),
+                "custom_themes holds {} twice",
+                theme.id
+            );
+        }
+        if !self.background_image.is_empty() {
+            background_image(&self.background_image)?;
         }
         anyhow::ensure!(!self.font_family.is_empty(), "font_family is empty");
         anyhow::ensure!(
@@ -174,14 +270,53 @@ impl Settings {
         if !self.shell.is_empty() {
             program_path(&self.shell)?;
         }
+        if !self.start_folder.is_empty() {
+            start_folder(&self.start_folder)?;
+        }
+        anyhow::ensure!(
+            self.start_in != StartIn::Folder || !self.start_folder.is_empty(),
+            "start_in is folder, but start_folder names none"
+        );
         Ok(())
     }
 }
 
+/// The background picture: a full path to a file.
+pub fn background_image(image: &str) -> anyhow::Result<PathBuf> {
+    let path = Path::new(image);
+    anyhow::ensure!(
+        path.is_absolute(),
+        "background_image is {image:?}, not a full path"
+    );
+    anyhow::ensure!(
+        path.is_file(),
+        "background_image is {image:?}, which names no file"
+    );
+    Ok(path.to_path_buf())
+}
+
+/// `folder` to start sessions in: a full path that exists.
+pub fn start_folder(folder: &str) -> anyhow::Result<PathBuf> {
+    let path = Path::new(folder);
+    anyhow::ensure!(
+        path.is_absolute(),
+        "start_folder is {folder:?}, not a full path"
+    );
+    anyhow::ensure!(
+        path.is_dir(),
+        "start_folder is {folder:?}, which names no folder"
+    );
+    Ok(path.to_path_buf())
+}
+
 /// The program `shell` names, as a session starts it: a file at a full path, or the first in `PATH`'s full folders.
 pub fn program_path(shell: &str) -> anyhow::Result<String> {
-    let folders = env::var_os("PATH").unwrap_or_default();
-    find(shell, &folders, cfg!(windows))
+    program_path_in(shell, &env::var_os("PATH").unwrap_or_default())
+}
+
+/// The program `shell` names, in `folders` as `PATH` lists them.
+pub fn program_path_in(shell: &str, folders: &impl AsRef<OsStr>) -> anyhow::Result<String> {
+    find(shell, folders.as_ref(), cfg!(windows))
 }
 
 /// `shell`'s program, or the first one named so in `folders`, listed as `PATH` lists them; with `exe`, as on Windows, a name without an extension means name.exe.
@@ -243,199 +378,4 @@ fn within<T: PartialOrd + std::fmt::Display>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn defaults_are_valid() {
-        Settings::default().validate().expect("defaults pass");
-    }
-
-    #[test]
-    fn a_value_out_of_range_names_its_field() {
-        let settings = Settings {
-            line_height: 2.5,
-            ..Settings::default()
-        };
-        let error = settings.validate().expect_err("2.5 is too tall");
-        assert_eq!(error.to_string(), "line_height is 2.5, outside 1 to 2");
-        let settings = Settings {
-            scrollback: 100_001,
-            ..Settings::default()
-        };
-        let error = settings.validate().expect_err("too many lines");
-        assert_eq!(
-            error.to_string(),
-            "scrollback is 100001, outside 0 to 100000"
-        );
-        let settings = Settings {
-            window_width: 50.0,
-            ..Settings::default()
-        };
-        let error = settings.validate().expect_err("too narrow");
-        assert_eq!(
-            error.to_string(),
-            "window_width is 50, outside 100 to 16384"
-        );
-        let settings = Settings {
-            panel_width: 1000.0,
-            ..Settings::default()
-        };
-        let error = settings.validate().expect_err("too wide");
-        assert_eq!(error.to_string(), "panel_width is 1000, outside 160 to 960");
-    }
-
-    #[test]
-    fn fallback_fonts_are_none_unless_named_and_none_is_empty() {
-        let older: Settings = serde_json::from_str(r#"{"font_family":"Menlo"}"#).expect("parses");
-        assert!(older.font_fallbacks.is_empty(), "a file from before");
-        let named: Settings =
-            serde_json::from_str(r#"{"font_fallbacks":["Kaiti SC","Noto Sans CJK SC"]}"#)
-                .expect("parses");
-        assert_eq!(named.font_fallbacks, ["Kaiti SC", "Noto Sans CJK SC"]);
-        named.validate().expect("named families pass");
-        let empty = Settings {
-            font_fallbacks: vec!["Kaiti SC".into(), String::new()],
-            ..Settings::default()
-        };
-        let error = empty.validate().expect_err("an empty family");
-        assert_eq!(error.to_string(), "font_fallbacks holds an empty family");
-    }
-
-    #[test]
-    fn a_shell_names_a_program_or_none() {
-        let shell = |shell: &str| Settings {
-            shell: shell.into(),
-            ..Settings::default()
-        };
-        assert!(shell("").validate().is_ok(), "the login shell");
-        let named = if cfg!(windows) { "cmd" } else { "sh" };
-        assert!(shell(named).validate().is_ok(), "a name on PATH");
-        let error = shell("/no/such/shell").validate().expect_err("no file");
-        let said = "shell is \"/no/such/shell\", which names no program";
-        assert_eq!(error.to_string(), said);
-        assert!(shell("bin/sh").validate().is_err(), "a relative path");
-        #[cfg(unix)]
-        {
-            let sh = find("sh", OsStr::new("/bin"), false).expect("sh");
-            assert_eq!(sh, "/bin/sh");
-            let root = OsStr::new("/");
-            assert!(
-                find("bin/sh", root, false).is_err(),
-                "a relative path, though / holds bin/sh"
-            );
-            assert!(shell("/bin/sh").validate().is_ok());
-            assert!(shell("/bin").validate().is_err(), "a folder");
-            assert!(
-                shell("/etc/hosts").validate().is_err(),
-                "a file that does not run"
-            );
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_shell_runs_for_this_user_from_a_full_folder() {
-        use std::{fs, os::unix::fs::PermissionsExt};
-        let folder = std::env::temp_dir().join(format!("elyterminal-shell-{}", std::process::id()));
-        fs::create_dir_all(&folder).expect("a test folder");
-        let file = folder.join("review-shell");
-        fs::write(&file, "#!/bin/sh\n").expect("a script");
-        // Root may run what any execute bit allows.
-        let root = unsafe { libc::geteuid() } == 0;
-        for (mode, runs) in [(0o644, false), (0o641, root), (0o755, true)] {
-            fs::set_permissions(&file, fs::Permissions::from_mode(mode)).expect("a mode");
-            assert_eq!(program(&file), runs, "mode {mode:o}");
-        }
-        let found = find("review-shell", folder.as_os_str(), false).expect("a program");
-        assert_eq!(Path::new(&found), file);
-    }
-
-    #[test]
-    fn exe_joins_only_a_name_without_an_extension() {
-        use std::fs;
-        let folder = env::temp_dir().join(format!("elyterminal-exe-{}", std::process::id()));
-        fs::create_dir_all(&folder).expect("a test folder");
-        let file = folder.join("review.exe");
-        fs::write(&file, "").expect("a program");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).expect("755");
-        }
-        let folders = folder.as_os_str();
-        for name in ["review", "review.exe"] {
-            let found = find(name, folders, true).expect("review.exe");
-            assert_eq!(Path::new(&found), file, "{name}");
-        }
-        assert!(
-            find("review.com", folders, true).is_err(),
-            "its own extension"
-        );
-        assert!(
-            find("review", folders, false).is_err(),
-            "no .exe off Windows"
-        );
-        fs::remove_dir_all(&folder).expect("cleanup");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_program_at_a_path_not_in_utf_8_counts_for_none() {
-        use std::{
-            ffi::OsString,
-            fs,
-            os::unix::{ffi::OsStringExt, fs::PermissionsExt},
-            path::PathBuf,
-        };
-        let folder = env::temp_dir().join(format!("elyterminal-bytes-{}-", std::process::id()));
-        let mut name = folder.into_os_string().into_vec();
-        name.push(0xff);
-        let folder = PathBuf::from(OsString::from_vec(name));
-        fs::create_dir_all(&folder).expect("a folder named in raw bytes");
-        let file = folder.join("review-shell");
-        fs::write(&file, "#!/bin/sh\n").expect("a script");
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).expect("755");
-        assert!(program(&file), "the file runs");
-        let error = find("review-shell", folder.as_os_str(), false).expect_err("not UTF-8");
-        assert!(error.to_string().ends_with("which is not UTF-8"), "{error}");
-        fs::remove_dir_all(&folder).expect("cleanup");
-    }
-
-    #[test]
-    fn a_relative_folder_counts_for_none() {
-        // Tests run in the crate, whose scripts folder holds a program.
-        let scripts = OsStr::new("scripts");
-        assert!(program(Path::new("scripts/check.sh")));
-        assert!(find("check.sh", scripts, false).is_err());
-    }
-
-    #[test]
-    fn a_nan_is_out_of_range() {
-        let settings = Settings {
-            font_size: f32::NAN,
-            ..Settings::default()
-        };
-        assert!(settings.validate().is_err());
-    }
-
-    #[test]
-    fn an_unknown_theme_fails() {
-        let settings = Settings {
-            dark_theme: Some(String::new()),
-            ..Settings::default()
-        };
-        assert_eq!(
-            settings.validate().expect_err("empty").to_string(),
-            "dark_theme is \"\", no built-in theme"
-        );
-        let settings = Settings {
-            theme: "mocha".into(),
-            ..Settings::default()
-        };
-        assert_eq!(
-            settings.validate().expect_err("unknown").to_string(),
-            "theme is \"mocha\", no built-in theme"
-        );
-    }
-}
+mod tests;

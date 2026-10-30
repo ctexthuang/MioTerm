@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use crate::term::Launch;
 
@@ -28,7 +29,10 @@ pub fn command() -> String {
     )
 }
 
-pub fn configure(launch: &mut Launch) -> anyhow::Result<()> {
+pub fn configure(
+    launch: &mut Launch,
+    folder: Option<&super::files::RemotePath>,
+) -> anyhow::Result<()> {
     let (_, args) = launch.program.as_mut().context("ssh: no shell program")?;
     args.splice(
         1..1,
@@ -39,10 +43,18 @@ pub fn configure(launch: &mut Launch) -> anyhow::Result<()> {
             "PermitLocalCommand=no".into(),
         ],
     );
-    args.push(command());
+    args.push(command_in(folder));
     launch.reports = true;
     log::debug!("ssh: remote shell directory reporting enabled");
     Ok(())
+}
+
+fn command_in(folder: Option<&super::files::RemotePath>) -> String {
+    let mut command = command();
+    if let Some(folder) = folder {
+        command.push_str(&format!(" '{}'", STANDARD.encode(&folder.0)));
+    }
+    command
 }
 
 #[cfg(all(test, unix))]

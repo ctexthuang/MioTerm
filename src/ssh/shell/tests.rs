@@ -5,6 +5,45 @@ use std::{
 };
 
 #[test]
+fn a_duplicate_remote_shell_opens_in_its_reported_folder() {
+    let root = std::env::temp_dir().join(format!("ely-remote-duplicate-{}", std::process::id()));
+    let folder = root.join("space ' ; $(never-run)");
+    fs::create_dir_all(&folder).unwrap();
+    let folder = folder.canonicalize().unwrap();
+    let path = super::super::files::RemotePath::from_path(&folder);
+    let command = super::command_in(Some(&path));
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", &command])
+        .env("SHELL", "/bin/bash")
+        .env("HOME", &root)
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"printf 'DUPLICATE:%s\\n' \"$PWD\"\nexit\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(&format!("DUPLICATE:{}", folder.display())),
+        "{:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn remote_shell_reports_each_directory_without_changing_startup_files() {
     let root = std::env::temp_dir().join(format!("ely-remote-shell-{}", std::process::id()));
     fs::create_dir_all(root.join("second % directory")).unwrap();

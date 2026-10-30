@@ -125,12 +125,16 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
-      - name: Package Linux on Debian 12
-        run: scripts/linux-tar.sh
+      - name: Package Linux on Ubuntu 22.04
+        run: scripts/linux-packages.sh
       - uses: actions/upload-artifact@v4
         with:
           name: MioTerm-linux-x86_64
-          path: target/release/MioTerm-*-linux-x86_64.tar.gz
+          path: |
+            target/release/MioTerm-*-linux-x86_64.tar.gz
+            target/release/MioTerm-*-linux-x86_64.AppImage
+            target/release/elyterminal_*_amd64.deb
+            target/release/elyterminal-*-1.x86_64.rpm
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -150,13 +154,13 @@ jobs:
           pattern: MioTerm-*
           path: dist
           merge-multiple: true
-      - name: Create the latest release with all three packages
+      - name: Create the latest release with all platform packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
           cd dist
-          sha256sum MioTerm-* > SHA256SUMS.txt
+          sha256sum MioTerm-* elyterminal_*_amd64.deb elyterminal-*-1.x86_64.rpm > SHA256SUMS.txt
           cd ..
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \

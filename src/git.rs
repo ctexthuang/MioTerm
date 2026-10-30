@@ -13,6 +13,8 @@ use ely_gpui_component::{
 mod command;
 mod diff;
 pub mod panel;
+#[cfg(any(windows, test))]
+mod wsl;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Backend {
@@ -222,7 +224,14 @@ impl Backend {
                 let mut path = folder.to_path_buf();
                 for part in rest.split(|&byte| byte == b'/') {
                     if !part.is_empty() {
-                        path.push(path_of(part)?);
+                        let part = path_of(part)?;
+                        #[cfg(windows)]
+                        let part = if wsl::split(folder).is_some() {
+                            PathBuf::from(wsl::to_windows(&part.display().to_string()))
+                        } else {
+                            part
+                        };
+                        path.push(part);
                     }
                 }
                 Ok((path, status))
@@ -294,6 +303,11 @@ impl Backend {
             format!("git: rev-parse in {} printed {printed:?}", folder.display())
         })?;
         let top = path_of(top)?;
+        #[cfg(windows)]
+        let top = match (self, wsl::split(folder)) {
+            (Self::Local, Some((share, _))) => wsl::join(share, &top),
+            _ => top,
+        };
         let status = ["status", "--porcelain=v2", "--branch", "-z"];
         let (head, records) = parse(&self.run(&top, &status, &[])?)?;
         let mut repo = Repo {
