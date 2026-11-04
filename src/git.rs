@@ -14,7 +14,7 @@ mod command;
 mod diff;
 pub mod panel;
 #[cfg(any(windows, test))]
-mod wsl;
+pub(crate) mod wsl;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Backend {

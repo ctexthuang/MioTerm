@@ -25,6 +25,7 @@ impl Workspace {
     pub(super) fn follow_files(&mut self, cx: &mut Context<Self>) {
         let session = &self.sessions[self.active];
         if let Some(connection) = endpoint(session) {
+            self.files.update(cx, |files, _| files.hide());
             let folder = session.remote_folder.clone();
             let disconnected = session.disconnected;
             self.remote_files.update(cx, |files, cx| {

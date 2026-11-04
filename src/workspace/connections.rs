@@ -76,7 +76,7 @@ impl Workspace {
         match started {
             Ok((pty, events, launch, control)) => {
                 self.ssh_error = None;
-                self.add(pty, events, launch, window, cx);
+                self.add(pty, events, launch, Vec::new(), window, cx);
                 let index = self.sessions.len() - 1;
                 self.sessions[index].name = host.label().to_string();
                 self.sessions[index].remote = Some(host.clone());
@@ -234,10 +234,14 @@ impl Workspace {
             )
             .children(error)
             .child(div().flex_1().min_h_0().p_2().child(body));
-        self.side_column(Side::Sessions, cx)
+        let mut column = self
+            .side_column(Side::Sessions, cx)
             .leading(left)
-            .action(self.new_menu(cx))
-            .child(list)
+            .action(self.new_menu(cx));
+        if let Some(profiles) = crate::profiles::button(&cx.entity(), &self.found, cx) {
+            column = column.action(profiles);
+        }
+        column.child(list)
     }
 
     pub(super) fn reconnect_button(&self, cx: &Context<Self>) -> Option<IconButton> {

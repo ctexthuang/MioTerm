@@ -18,6 +18,8 @@
 
 `v0.0.9` 已合并 ELYTerminal 0.2.0 的上游提交 [`6936b6f`](https://github.com/ELY-Open-Source/ELYTerminal/commit/6936b6f3edb5f55891dd62898290994f52e24dc0)，并修复 SSH 部分凭据缺失时的同步和本机删除记录被恢复的问题。集成范围见 [上游同步记录](docs/upstream-integration.md)，测试步骤见 [测试指南](docs/testing.md)。
 
+当前开发代码进一步合并至 ELYTerminal 0.2.2 的 [`ba664ef`](https://github.com/ELY-Open-Source/ELYTerminal/commit/ba664ef)，尚未发布新的 MioTerm 版本。
+
 ## 当前功能
 
 ### 本地终端与界面
@@ -27,6 +29,7 @@
 - 支持 xterm、kitty 键盘协议，以及 Windows 的 win32-input-mode。
 - 本地 shell 集成支持 zsh、bash、fish 和 PowerShell，报告当前目录、标题及命令状态。
 - 本地终端默认从当前用户主目录启动，也可设置从指定文件夹或当前本地会话目录新建会话。
+- 支持自定义启动配置及检测本机 shell，左侧加号旁的菜单可选择启动；支持命令行目录参数。
 - **每次启动时左右侧栏均默认收起**，点击标题栏两端的图标或使用快捷键再展开，不恢复上次的展开状态。
 - 左侧可切换会话与 SSH 主机；右侧通过图标切换监控、Files 和 Git，侧栏宽度支持拖动调整。
 - 保留上游的 Ely 桌面角色、会话状态标记、通知、主题、透明度与背景模糊。
@@ -35,9 +38,12 @@
 - 支持新建、编辑自定义主题、选择终端背景图，并记住窗口的显示器和位置。
 - 支持拖动会话排序和会话右键复制、关闭；复制 SSH 会话会重连原主机，并从已报告的远程目录启动。
 - 可在设置中启用本地 Files 右键菜单，提供打开、复制路径和在此处新建本地会话。
+- 本地 Files 展示时自动刷新文件与 Git 标记；可将文件树条目拖入终端输入路径，右键 Files 图标可选择目录新建本地会话。
+- 可设置界面字体与字号、终端字重、独立中日韩字体、抗锯齿模式和平滑光标。
 - 支持 Kitty 图片协议与动画、OSC 5522 剪贴板协议；程序读取剪贴板前默认请求许可。
 - 历史记录空闲后压缩存储，采用上游的 ASCII 解析和文本绘制优化。
 - Windows 使用随包提供的 Microsoft OpenConsole / ConPTY，支持 WSL、Git Bash 目录集成及 Windows 11 Mica 背景。
+- Windows 支持 cmd 提示符与目录集成，并可在设置中添加或移除“在 MioTerm 中打开”的资源管理器菜单。
 
 ### SSH 连接管理
 

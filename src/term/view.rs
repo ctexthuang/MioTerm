@@ -14,12 +14,14 @@ use alacritty_terminal::{
 };
 use ely_gpui_component::{
     forms::{Copy, Paste, SelectAll},
+    lists::TreeDrag,
     theme::ActiveTheme,
 };
 use futures::StreamExt;
 use gpui::{
     Bounds, Context, EventEmitter, ExternalPaths, FocusHandle, Focusable, IntoElement, MouseButton,
-    ParentElement, Pixels, Render, Styled, Subscription, Task, Window, div, prelude::*, px,
+    ParentElement, Pixels, Render, SharedString, Styled, Subscription, Task, Window, div,
+    prelude::*, px,
 };
 
 use super::{
@@ -46,6 +48,9 @@ use crate::{settings::SettingsStore, themes};
 /// How long the cursor shows, then hides, while it blinks.
 pub const BLINK: Duration = Duration::from_millis(600);
 
+/// How long the cursor glides to a new cell.
+const GLIDE: Duration = Duration::from_millis(90);
+
 /// What a terminal tells its owner.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminalEvent {
@@ -55,7 +60,11 @@ pub enum TerminalEvent {
     Bell,
     /// The state its row shows changed, to this one.
     Shows(Option<State>),
+    /// Its last command's status changed, to this one.
+    Ended(Option<i32>),
     Exited(ExitStatus),
+    /// A Files node's drag landed on it: the node's tree key.
+    Dragged(SharedString),
 }
 
 /// A program on a pseudo-terminal, drawn cell by cell in the theme and font the settings choose.
@@ -66,6 +75,10 @@ pub struct TerminalView {
     pub(super) marked: Option<String>,
     /// The cursor's cell in the window, from the last layout.
     pub(super) caret: Bounds<Pixels>,
+    /// The cursor's glide to `target`: where it was drawn and when it set off.
+    glide: Option<((f32, f32), Instant)>,
+    /// The cell the cursor heads for; a new one starts a glide.
+    target: Option<(usize, usize)>,
     pub(super) pointer: Pointer,
     /// The mouse mode, as the tap follows it.
     pub(super) mouse: MouseMode,
@@ -153,6 +166,8 @@ impl TerminalView {
             focus,
             marked: None,
             caret: Bounds::default(),
+            glide: None,
+            target: None,
             pointer: Pointer::default(),
             mouse: MouseMode::default(),
             backdrop_failed: None,
@@ -201,12 +216,41 @@ impl TerminalView {
         self.pty.pid
     }
 
+    /// Where the cursor is drawn on its way to `to`, in cells.
+    pub(super) fn glide_position(&self, to: (usize, usize)) -> (f32, f32) {
+        let end = (to.0 as f32, to.1 as f32);
+        match self.glide {
+            Some((from, start)) if self.target == Some(to) => {
+                let t = start.elapsed().as_secs_f32() / GLIDE.as_secs_f32();
+                if t >= 1. {
+                    return end;
+                }
+                let e = t * t * (3. - 2. * t);
+                (from.0 + (end.0 - from.0) * e, from.1 + (end.1 - from.1) * e)
+            }
+            _ => end,
+        }
+    }
+
+    /// Starts a glide from where the cursor is drawn when its cell changes.
+    fn follow(&mut self, target: Option<(usize, usize)>, smooth: bool) {
+        match (self.target, target) {
+            (_, None) => self.glide = None,
+            (Some(from), Some(to)) if smooth && from != to => {
+                self.glide = Some((self.glide_position(from), Instant::now()));
+            }
+            (_, Some(_)) if !smooth => self.glide = None,
+            _ => {}
+        }
+        self.target = target;
+    }
+
     /// What programs in this terminal say they are doing.
     pub fn records(&self) -> &Records {
         &self.records
     }
 
-    /// The status its shell's last command ended with.
+    /// The last command's status; none while a command runs.
     pub fn ended(&self) -> Option<i32> {
         self.ended
     }
@@ -218,6 +262,8 @@ impl TerminalView {
             self.pty.graphics().resume();
         } else if !front {
             paint::drop_pictures(self.pictures.release(), window);
+            // Shown again, the cursor starts where it stands.
+            (self.glide, self.target) = (None, None);
         }
         self.front = front;
     }
@@ -342,6 +388,8 @@ impl Render for TerminalView {
                     Some((cursor, shape))
                 }
             });
+        let target = cursor.as_ref().map(|(c, _)| (c.row, c.column));
+        self.follow(target, settings.cursor_smooth);
         let root = div()
             .id(("terminal", cx.entity_id()))
             .key_context(input::CONTEXT)
@@ -360,6 +408,7 @@ impl Render for TerminalView {
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_scroll_wheel(cx.listener(Self::wheel))
             .on_drop(cx.listener(|view, paths: &ExternalPaths, _, cx| view.drop_paths(paths, cx)))
+            .on_drop(cx.listener(|view, drag: &TreeDrag, _, cx| view.dragged(drag, cx)))
             .size_full()
             .px(px(settings.padding_x))
             .py(px(settings.padding_y))

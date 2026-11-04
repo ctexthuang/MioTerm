@@ -1,5 +1,8 @@
 mod cards;
+mod cursor;
 mod custom;
+mod glyphs;
+mod interface;
 
 use std::ops::RangeInclusive;
 
@@ -9,11 +12,10 @@ use ely_gpui_component::{
     i18n::text,
     primitives::IconName,
     settings::{SettingsRow, SettingsSection},
-    theme::{ActiveTheme, ControlSize, Radius, TextSize},
+    theme::{ActiveTheme, ControlSize, TextSize},
 };
 use gpui::{
-    App, Context, Div, Entity, ParentElement, SharedString, Styled, Window, div, prelude::*, px,
-    relative,
+    App, Context, Div, Entity, ParentElement, SharedString, Styled, Window, div, prelude::*,
 };
 
 use self::cards::grid;
@@ -24,19 +26,10 @@ use super::{
 use crate::{
     blur,
     settings::{
-        Backdrop, CursorStyle, FONT_SIZE, LINE_HEIGHT, Language, OPACITY, PADDING, Settings,
+        Backdrop, FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, Language, OPACITY, PADDING, Settings,
         SettingsStore,
     },
-    themes::{self, TerminalTheme},
 };
-
-/// Each cursor style, its key and its name's key.
-const CURSORS: [(CursorStyle, &str, &str); 4] = [
-    (CursorStyle::Block, "block", "et.cursor.block"),
-    (CursorStyle::Bar, "bar", "et.cursor.bar"),
-    (CursorStyle::Underline, "underline", "et.cursor.underline"),
-    (CursorStyle::Hollow, "hollow", "et.cursor.hollow"),
-];
 
 /// Each Windows 11 backdrop, its key and its name's key.
 const BACKDROPS: [(Backdrop, &str, &str); 3] = [
@@ -66,8 +59,11 @@ impl SettingsWindow {
             |settings, language| settings.language = language,
             cx,
         );
+        let [font, size] = self.interface_rows(cx);
         let language = SettingsSection::new(word("et.appearance.language"))
-            .row(SettingsRow::new(word("et.appearance.interface")).control(language));
+            .row(SettingsRow::new(word("et.appearance.interface")).control(language))
+            .row(font)
+            .row(size);
         let separate = settings.dark_theme.is_some();
         let dark = Switch::new("dark_theme", separate).on_change({
             let this = this.clone();
@@ -122,6 +118,7 @@ impl SettingsWindow {
         let font = SettingsSection::new(word("et.appearance.font"))
             .row(SettingsRow::new(word("et.appearance.family")).control(family))
             .row(fallbacks)
+            .row(self.cjk_row(cx))
             .row(
                 SettingsRow::new(word("et.appearance.size")).control(self.number(
                     "font_size",
@@ -129,6 +126,16 @@ impl SettingsWindow {
                     &FONT_SIZE,
                     (1.0, 1),
                     |settings, size| settings.font_size = size,
+                    cx,
+                )),
+            )
+            .row(
+                SettingsRow::new(word("et.appearance.weight")).control(self.number(
+                    "font_weight",
+                    settings.font_weight,
+                    &FONT_WEIGHT,
+                    (100.0, 0),
+                    |settings, weight| settings.font_weight = weight,
                     cx,
                 )),
             )
@@ -149,29 +156,9 @@ impl SettingsWindow {
                     settings.ligatures,
                     |settings, on| settings.ligatures = on,
                 )),
-            );
-        let style = choice(
-            &this,
-            "cursor_style",
-            &CURSORS,
-            settings.cursor_style,
-            |settings, style| settings.cursor_style = style,
-            cx,
-        );
-        let active = themes::active(settings, window.appearance(), cx);
-        let lit = self.lit || !settings.cursor_blink;
-        let preview = prompt(settings, &active, lit, cx);
-        let cursor = SettingsSection::new(word("et.appearance.cursor"))
-            .row(SettingsRow::new(word("et.appearance.style")).control(style))
-            .row(
-                SettingsRow::new(word("et.appearance.blink")).control(switch(
-                    &this,
-                    "cursor_blink",
-                    settings.cursor_blink,
-                    |settings, on| settings.cursor_blink = on,
-                )),
             )
-            .row(SettingsRow::new(word("et.appearance.preview")).control(preview));
+            .when_some(self.antialias_row(cx), |font, row| font.row(row));
+        let cursor = self.cursor_section(window, cx);
         let opacity = percent(settings.background_opacity);
         let slider = Slider::new("background_opacity", opacity)
             .range(percent(*OPACITY.start()), percent(*OPACITY.end()))
@@ -426,42 +413,6 @@ fn percent(fraction: f32) -> f64 {
 
 fn fraction(percent: f64) -> f32 {
     (percent / 100.) as f32
-}
-
-/// A prompt in the terminal's theme and font, its cursor drawn as the terminal draws it.
-fn prompt(settings: &Settings, theme: &TerminalTheme, lit: bool, cx: &App) -> Div {
-    let rule = (px(settings.font_size) / 14.).max(px(1.));
-    let mark = div().absolute().bg(theme.cursor);
-    let cursor = match settings.cursor_style {
-        CursorStyle::Block => mark.inset_0(),
-        CursorStyle::Bar => mark.top_0().bottom_0().left_0().w(rule * 2.),
-        CursorStyle::Underline => mark.left_0().right_0().bottom_0().h(rule * 2.),
-        CursorStyle::Hollow => div()
-            .absolute()
-            .inset_0()
-            .border_1()
-            .border_color(theme.cursor),
-    };
-    let chrome = cx.theme();
-    div()
-        .flex()
-        .p_2()
-        .rounded(chrome.radius(Radius::Sm))
-        .border_1()
-        .border_color(chrome.colors.border)
-        .bg(theme.background)
-        .text_color(theme.foreground)
-        .font_family(settings.font_family.clone())
-        .text_size(px(settings.font_size))
-        .line_height(relative(settings.line_height))
-        .child(div().text_color(theme.ansi[2]).child("$"))
-        .child(" ls")
-        .child(
-            div()
-                .relative()
-                .child(" ")
-                .when(lit, |cell| cell.child(cursor)),
-        )
 }
 
 #[cfg(test)]

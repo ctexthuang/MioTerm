@@ -74,5 +74,19 @@ fn managed_ssh_reports_remain_remote_even_when_the_hostname_matches() {
             Ok(PtyEvent::RemoteFolder(path)) if path.as_os_str() == std::ffi::OsStr::new(expected)
         ));
     }
+    let windows = br"9;9;C:\client\folder";
+    report(
+        Found::Osc(windows, windows.len()),
+        &events,
+        (10, true),
+        &mut last,
+        (&mut kitty, &mut titles, &mut named),
+        &|| Some(10),
+        &|_, _| false,
+    );
+    assert!(
+        heard.try_recv().is_err(),
+        "SSH must ignore client folder reports"
+    );
     assert!(last.is_none(), "no remote path became a local folder");
 }

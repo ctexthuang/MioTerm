@@ -1,14 +1,15 @@
 use ely_gpui_component::{
-    buttons::{ButtonVariant, IconButton},
+    buttons::{Button, ButtonVariant, IconButton},
     i18n::text,
+    layout::Collapsible,
     primitives::IconName,
     shell::ShellColumn,
     theme::ControlSize,
     typography::Caption,
 };
 use gpui::{
-    App, Context, Div, IntoElement, ParentElement, StyleRefinement, Styled, div,
-    prelude::FluentBuilder,
+    App, Context, Div, Focusable, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    StyleRefinement, Styled, div, prelude::FluentBuilder,
 };
 
 use super::{Workspace, widths::Side};
@@ -39,8 +40,22 @@ impl Workspace {
         ]
         .into_iter()
         .map(|(panel, id, icon, name)| {
-            tab_button(id, icon, text(cx, name, &[]), tab == panel)
-                .on_click(move |_, _, cx| show_tab(panel, cx))
+            let workspace = cx.entity();
+            div()
+                .on_mouse_down(MouseButton::Right, move |_, window, cx| {
+                    if panel == PanelTab::Files && SettingsStore::get(cx).files_menu {
+                        workspace.update(cx, |this, cx| {
+                            this.flip_folder_actions(cx);
+                            if let Some(session) = this.sessions.get(this.active) {
+                                window.focus(&session.terminal.focus_handle(cx), cx);
+                            }
+                        });
+                    }
+                })
+                .child(
+                    tab_button(id, icon, text(cx, name, &[]), tab == panel)
+                        .on_click(move |_, _, cx| show_tab(panel, cx)),
+                )
         });
         let session = self.sessions.get(self.active);
         let remote = session.is_some_and(|session| session.remote.is_some());
@@ -91,6 +106,7 @@ impl Workspace {
                     .py_2()
                     .children(switch),
             )
+            .child(div().flex_none().child(self.folder_actions(cx)))
             .child(body(tab == PanelTab::Monitor).child(self.monitor.clone()))
             .child(body(tab != PanelTab::Monitor).child(files))
     }
@@ -119,5 +135,50 @@ fn show_tab(panel: PanelTab, cx: &mut App) {
     match SettingsStore::update(cx, |settings| settings.panel = panel) {
         Ok(()) => log::info!("app: the right column shows {panel:?}"),
         Err(error) => log::error!("app: the right column stays: {error:#}"),
+    }
+}
+
+impl Workspace {
+    /// Shows Files, then shows or hides its folder row.
+    fn flip_folder_actions(&mut self, cx: &mut Context<Self>) {
+        show_tab(PanelTab::Files, cx);
+        if SettingsStore::get(cx).panel != PanelTab::Files {
+            return;
+        }
+        self.folder_actions = !self.folder_actions;
+        let shown = if self.folder_actions {
+            "shown"
+        } else {
+            "hidden"
+        };
+        log::info!("files: folder actions {shown}");
+        cx.notify();
+    }
+
+    pub(super) fn folder_actions(&self, cx: &Context<Self>) -> Collapsible {
+        let settings = SettingsStore::get(cx);
+        let shown = self.folder_actions && settings.files_menu && settings.panel == PanelTab::Files;
+        let workspace = cx.entity();
+        let choose = Button::new(
+            "choose-session-folder",
+            text(cx, "et.files.choose_folder", &[]),
+        )
+        .variant(ButtonVariant::Ghost)
+        .size(ControlSize::Sm)
+        .icon(IconName::Folder)
+        .full_width()
+        .disabled(self.choosing_folder)
+        .on_click(move |_, window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.folder_actions = false;
+                log::info!("files: folder actions hidden for chooser");
+                if let Some(session) = this.sessions.get(this.active) {
+                    window.focus(&session.terminal.focus_handle(cx), cx);
+                }
+                cx.notify();
+                this.choose_folder(window, cx);
+            });
+        });
+        Collapsible::new("files-folder-actions", shown).child(div().px_2().pt_2().child(choose))
     }
 }

@@ -20,13 +20,14 @@ use crate::{
     menus,
     monitor::MonitorPanel,
     sessions::{self, Session, orb},
-    settings::{SettingsStore, window::OpenSettings},
+    settings::{PanelTab, SettingsStore, window::OpenSettings},
     ssh::panel::{Connect, HostPanel},
     term::{Events, Launch, Pty, TerminalView},
 };
 
 mod connections;
 mod events;
+mod folder;
 mod panel;
 mod remote;
 mod rename;
@@ -110,6 +111,10 @@ pub struct Workspace {
     dragged: Dragged,
     /// Draws the window at each step of the status marks while one shown moves.
     ticking: Option<Task<()>>,
+    /// The shells this system holds, found as the window opened.
+    found: Vec<crate::profiles::Found>,
+    choosing_folder: bool,
+    folder_actions: bool,
     _settings: Subscription,
     _acted: Subscription,
     _remote_folder: Subscription,
@@ -148,9 +153,15 @@ impl Workspace {
                 this.files.update(cx, |files, cx| files.show(&folder, cx));
             }
         });
-        let files = cx.new(|_| Files::new(launch.cwd.clone()));
+        let files = cx.new(|cx| {
+            let mut files = Files::new(launch.cwd.clone());
+            files.poll(cx);
+            files
+        });
         let here = cx.subscribe_in(&files, window, |this, _, Here(folder), window, cx| {
-            this.here(folder.clone(), window, cx)
+            if let Err(error) = this.here(folder.clone(), window, cx) {
+                folder::failed(error, window, cx);
+            }
         });
         let mut workspace = Self {
             focus: cx.focus_handle(),
@@ -167,15 +178,23 @@ impl Workspace {
             background: Blur::new(window, SettingsStore::get(cx)),
             dragged: Dragged::default(),
             ticking: None,
+            found: crate::profiles::detected(),
+            choosing_folder: false,
+            folder_actions: false,
             _settings: cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
                 this.background.follow(window, SettingsStore::get(cx));
+                let settings = SettingsStore::get(cx);
+                if !settings.files_menu || !settings.show_panel || settings.panel != PanelTab::Files
+                {
+                    this.folder_actions = false;
+                }
                 cx.notify();
             }),
             _acted: acted,
             _remote_folder: remote_folder,
             _here: here,
         };
-        workspace.add(pty, events, launch, window, cx);
+        workspace.add(pty, events, launch, Vec::new(), window, cx);
         workspace.select(0, window, cx);
         workspace
     }
@@ -185,6 +204,7 @@ impl Workspace {
         pty: Pty,
         events: Events,
         launch: Launch,
+        args: Vec<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -206,6 +226,7 @@ impl Workspace {
             editing: None,
             folder: launch.cwd,
             shell,
+            args,
             reports: launch.reports,
             bell: false,
             waiting: false,
@@ -384,7 +405,7 @@ impl Render for Workspace {
             shell = shell.column(terminal.action(end));
         }
         // The context sits above the focus root, so its keys work wherever focus is.
-        div()
+        crate::interface::dress(div(), cx)
             .size_full()
             .key_context(CONTEXT)
             .map(menus::window_actions)

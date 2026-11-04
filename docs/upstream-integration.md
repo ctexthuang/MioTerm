@@ -2,12 +2,29 @@
 
 ## Baseline
 
-- MioTerm base: `72862bb` (`v0.0.8`).
-- Previously included upstream: `f360143` (ELYTerminal 0.1.7).
-- Integrated upstream: `6936b6f3edb5f55891dd62898290994f52e24dc0` (0.2.0).
+- MioTerm base: `eb3617f` (`v0.0.9`).
+- Previously included upstream: `6936b6f3edb5f55891dd62898290994f52e24dc0` (0.2.0).
+- Integrated upstream: `ba664ef6ef0cdfcb35dc6b65d538cc58e7ecd313` (0.2.2, fetched 2026-11-04).
 - Upstream repository: https://github.com/ELY-Open-Source/ELYTerminal.
 - MioTerm keeps its own version, release tags and update endpoint.
-- MioTerm `v0.0.9` is the first release containing this integration.
+- This integration is development code; MioTerm `v0.0.9` still uses upstream 0.2.0.
+
+## New Since Upstream 0.2.0
+
+- Named launch profiles with command arguments and optional start folders.
+- Detected local shells, Git Bash and WSL distributions in the profile menu.
+- Interface font and size, terminal font weight and a separate CJK font.
+- Grayscale/subpixel antialiasing and configurable smooth cursor motion.
+- Local Files polling, Git mark refresh and tree-to-terminal path dragging.
+- Right-click the Files icon to choose a folder for a new local session.
+- Folder CLI arguments and Linux `X-TerminalArgDir` integration.
+- Per-user Windows Explorer menus branded MioTerm with separate registry keys.
+- cmd prompt/directory integration and clearing previous command failures.
+- zsh prompt resize/reflow fixes and CSI 16 t cell-pixel-size replies.
+- Touch Bar Mac window-close crash fix in the pinned macOS platform dependency.
+
+Upstream's Homebrew/winget manifests target ELYTerminal and are excluded, along
+with its website and deployment workflow. MioTerm keeps its own release workflow.
 
 ## Included
 
@@ -39,6 +56,11 @@ SSH duplication reconnects with the original profile and a separately encoded
 remote start directory. Local new-session actions never run the SSH executable
 as though it were the configured local shell. WSL Git routes through the local
 backend only; remote Git always runs on its selected SSH host.
+
+Local Files polling pauses while the remote file panes are shown. The new
+cmd OSC 9;9 directory reports apply only to local sessions; managed SSH
+continues to follow remote OSC 7 paths. The previously rolled-back sync
+redesign is not included: `src/ssh` remains unchanged from MioTerm v0.0.9.
 
 The upstream website and its additional push/PR packaging workflow are excluded.
 The imported `docs/en_us` and `docs/zh_cn` are upstream terminal references,
@@ -74,7 +96,26 @@ Tests use generated keys, isolated app folders and local mock sync servers.
 Live Gitee tests remain opt-in and must not upload real user configuration.
 Platform-specific runtime behavior requires the corresponding operating system.
 
-### Local Integration Checks
+### Current 0.2.2 Integration Checks
+
+On macOS with Rust 1.95.0 and runtime shaders:
+
+- Core regression: 575 passed, one opt-in Gitee test ignored, four shell tests filtered.
+- Isolated font, encrypted application vault and actual askpass helper tests pass.
+- Generated RSA PEM import, source removal and passphrase conflict tests pass.
+- All-target Clippy with warnings denied, formatting and the 500-line rule pass.
+- Release binary and native screenshot harness build successfully.
+- Native screenshots confirm closed startup sidebars, CJK text and Mocha pink.
+- Native Files checks confirm automatic refresh and its right-click folder action.
+- The profile menu detects shells and opens a saved command with its arguments and folder.
+- The settings window shows interface font controls and retains Sync navigation.
+- No live Gitee or loopback SSH tests ran for this integration.
+
+The four filtered tests require fish, PowerShell or platform-specific shell
+environments absent on this host. Windows and Linux native runtime checks
+remain outstanding; no real user configuration or cloud archives were used.
+
+### Previous 0.2.0 Integration Checks
 
 On macOS with Rust 1.95.0:
 

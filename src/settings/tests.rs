@@ -53,6 +53,15 @@ fn a_backdrop_is_acrylic_unless_named() {
 }
 
 #[test]
+fn antialias_is_grayscale_unless_subpixel_is_named() {
+    assert_eq!(Settings::default().text_antialias, Antialias::Grayscale);
+    let settings: Settings = serde_json::from_str(r#"{"text_antialias": "subpixel"}"#)
+        .expect("subpixel is an antialiasing");
+    assert_eq!(settings.text_antialias, Antialias::Subpixel);
+    assert!(serde_json::from_str::<Settings>(r#"{"text_antialias": "cleartype"}"#).is_err());
+}
+
+#[test]
 fn a_value_out_of_range_names_its_field() {
     let settings = Settings {
         line_height: 2.5,
@@ -60,6 +69,12 @@ fn a_value_out_of_range_names_its_field() {
     };
     let error = settings.validate().expect_err("2.5 is too tall");
     assert_eq!(error.to_string(), "line_height is 2.5, outside 1 to 2");
+    let settings = Settings {
+        font_weight: 950.0,
+        ..Settings::default()
+    };
+    let error = settings.validate().expect_err("950 is past black");
+    assert_eq!(error.to_string(), "font_weight is 950, outside 100 to 900");
     let settings = Settings {
         scrollback: 100_001,
         ..Settings::default()
@@ -336,4 +351,31 @@ fn a_background_image_is_a_file_at_a_full_path() {
     image(file.to_str().expect("utf-8"))
         .validate()
         .expect("a file at a full path");
+}
+
+#[test]
+fn the_interface_wears_the_system_font_at_13_px_unless_named() {
+    let settings: Settings = serde_json::from_str("{}").expect("every field has a default");
+    assert_eq!(
+        (settings.interface_font.as_str(), settings.interface_size),
+        ("", 13)
+    );
+    let named: Settings =
+        serde_json::from_str(r#"{"interface_font":"Menlo","interface_size":16}"#).expect("parses");
+    assert_eq!(
+        (named.interface_font.as_str(), named.interface_size),
+        ("Menlo", 16)
+    );
+    named.validate().expect("16 px passes");
+    for size in [11, 17] {
+        let settings = Settings {
+            interface_size: size,
+            ..Settings::default()
+        };
+        let error = settings.validate().expect_err("outside 12 to 16");
+        assert_eq!(
+            error.to_string(),
+            format!("interface_size is {size}, outside 12 to 16")
+        );
+    }
 }

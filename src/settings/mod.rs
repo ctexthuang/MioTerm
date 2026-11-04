@@ -1,4 +1,5 @@
 mod folder;
+mod profiles;
 mod store;
 pub mod window;
 
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::themes;
 
 pub(crate) use folder::folder;
+pub use profiles::{Profile, command_line, words};
 pub use store::{SettingsStore, load, save};
 
 /// Where new sessions start: home, the shown folder, `start_folder`.
@@ -58,6 +60,15 @@ pub enum Backdrop {
     MicaAlt,
 }
 
+/// How glyphs antialias: grayscale, as Windows Terminal draws, or by subpixel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Antialias {
+    #[default]
+    Grayscale,
+    Subpixel,
+}
+
 /// The interface's language, by the tag Ely's `I18n` names it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
@@ -92,11 +103,17 @@ pub enum PanelTab {
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub language: Language,
+    /// The interface's family; empty for the system's.
+    pub interface_font: String,
+    /// The interface's base text, in pixels.
+    pub interface_size: u8,
     /// A program path; empty runs the login shell.
     pub shell: String,
     pub start_in: StartIn,
     /// Start in's Folder; empty until one is chosen.
     pub start_folder: String,
+    /// What the new-session menu offers before the detected shells.
+    pub profiles: Vec<Profile>,
     pub theme: String,
     /// The theme while the system is dark; none keeps `theme`.
     pub dark_theme: Option<String>,
@@ -107,11 +124,19 @@ pub struct Settings {
     pub font_family: String,
     /// Families tried in order for a character Font family lacks.
     pub font_fallbacks: Vec<String>,
+    /// Draws CJK characters; empty leaves them to the family.
+    pub cjk_font: String,
     pub font_size: f32,
+    /// Normal text's weight; bold sits 300 above it.
+    pub font_weight: f32,
     pub line_height: f32,
+    /// Subpixel draws only on an opaque window, and never on macOS.
+    pub text_antialias: Antialias,
     pub ligatures: bool,
     pub cursor_style: CursorStyle,
     pub cursor_blink: bool,
+    /// The cursor glides to its new cell.
+    pub cursor_smooth: bool,
     pub background_opacity: f32,
     pub background_blur: bool,
     /// Windows 11's backdrop while blurred.
@@ -163,20 +188,27 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             language: Language::English,
+            interface_font: String::new(),
+            interface_size: 13,
             shell: String::new(),
             start_in: StartIn::Home,
             start_folder: String::new(),
+            profiles: Vec::new(),
             theme: themes::default_id().into(),
             dark_theme: None,
             custom_themes: Vec::new(),
             background_image: String::new(),
             font_family: "JetBrains Mono".into(),
             font_fallbacks: Vec::new(),
+            cjk_font: String::new(),
             font_size: 13.0,
+            font_weight: 400.0,
             line_height: 1.2,
+            text_antialias: Antialias::Grayscale,
             ligatures: true,
             cursor_style: CursorStyle::Block,
             cursor_blink: true,
+            cursor_smooth: true,
             background_opacity: 0.88,
             background_blur: true,
             backdrop: Backdrop::Acrylic,
@@ -206,7 +238,9 @@ impl Default for Settings {
     }
 }
 
+pub const INTERFACE_SIZE: RangeInclusive<u8> = 12..=16;
 pub const FONT_SIZE: RangeInclusive<f32> = 6.0..=72.0;
+pub const FONT_WEIGHT: RangeInclusive<f32> = 100.0..=900.0;
 pub const LINE_HEIGHT: RangeInclusive<f32> = 1.0..=2.0;
 pub const OPACITY: RangeInclusive<f32> = 0.3..=1.0;
 pub const PADDING: RangeInclusive<f32> = 0.0..=64.0;
@@ -221,7 +255,9 @@ impl Settings {
     pub fn validate(&self) -> anyhow::Result<()> {
         self.webdav.validate()?;
         self.sync.validate(&self.webdav)?;
+        within("interface_size", self.interface_size, &INTERFACE_SIZE)?;
         within("font_size", self.font_size, &FONT_SIZE)?;
+        within("font_weight", self.font_weight, &FONT_WEIGHT)?;
         within("line_height", self.line_height, &LINE_HEIGHT)?;
         within("background_opacity", self.background_opacity, &OPACITY)?;
         within("padding_x", self.padding_x, &PADDING)?;
@@ -272,6 +308,16 @@ impl Settings {
         }
         if !self.start_folder.is_empty() {
             start_folder(&self.start_folder)?;
+        }
+        for (at, profile) in self.profiles.iter().enumerate() {
+            profile.check()?;
+            anyhow::ensure!(
+                !self.profiles[..at]
+                    .iter()
+                    .any(|other| other.name == profile.name),
+                "profiles holds {} twice",
+                profile.name
+            );
         }
         anyhow::ensure!(
             self.start_in != StartIn::Folder || !self.start_folder.is_empty(),

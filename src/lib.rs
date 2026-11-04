@@ -1,11 +1,15 @@
 pub mod app;
 pub mod blur;
+#[cfg(windows)]
+pub mod explorer;
 pub mod files;
 pub mod git;
 pub mod i18n;
+pub mod interface;
 pub mod menus;
 pub mod monitor;
 pub mod pet;
+pub mod profiles;
 pub mod sessions;
 pub mod settings;
 pub mod ssh;
