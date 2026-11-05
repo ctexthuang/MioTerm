@@ -116,7 +116,7 @@ impl Workspace {
     }
 
     /// Shows a `shell` session with `args` from `start`, at `at` or last.
-    fn open(
+    pub(super) fn open(
         &mut self,
         shell: &str,
         args: Vec<String>,

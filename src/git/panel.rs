@@ -13,6 +13,7 @@ use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Subscription
 use self::view::{is_folder, shown};
 use super::{Backend, Change, Repo};
 
+mod refresh;
 mod view;
 
 /// The newest commits the panel lists.
@@ -68,6 +69,8 @@ pub struct GitPanel {
     opening: Task<()>,
     /// The last action asked; each waits for the one before it.
     acting: Task<()>,
+    refresh: refresh::Refresh,
+    _polling: Task<()>,
     _language: Subscription,
 }
 
@@ -83,6 +86,7 @@ impl GitPanel {
         self.error = None;
         self.state = State::Failed(message.to_string().into());
         self.reading = Task::ready(());
+        self.refresh.invalidate();
         self.opening = Task::ready(());
         self.diff = None;
         self.discarding = None;
@@ -116,6 +120,8 @@ impl GitPanel {
             reading: Task::ready(()),
             opening: Task::ready(()),
             acting: Task::ready(()),
+            refresh: refresh::Refresh::default(),
+            _polling: Self::poll(cx),
             _language: cx.observe_global::<I18n>(Self::speak),
         }
     }
@@ -139,6 +145,8 @@ impl GitPanel {
     pub fn show_on(&mut self, backend: Backend, folder: &Path, cx: &mut Context<Self>) {
         self.enabled = true;
         if !backend.same_path(folder, &self.folder) || backend != self.backend {
+            self.reading = Task::ready(());
+            self.refresh.invalidate();
             log::info!("git panel: shows {}", folder.display());
             // Inside the shown work tree the view stays while it reads, so a cd does not blank it.
             let inside = backend == self.backend
@@ -173,6 +181,9 @@ impl GitPanel {
         if !self.enabled {
             return;
         }
+        let Some(generation) = self.refresh.begin() else {
+            return;
+        };
         let folder = self.folder.clone();
         let backend = self.backend.clone();
         let read = cx.background_spawn(async move {
@@ -188,7 +199,16 @@ impl GitPanel {
         });
         self.reading = cx.spawn(async move |panel, cx| {
             let read = read.await;
-            panel.update(cx, |panel, cx| panel.store(read, cx)).ok();
+            panel
+                .update(cx, |panel, cx| {
+                    if panel.refresh.finish(generation) {
+                        panel.store(read, cx);
+                    }
+                    if panel.refresh.again() {
+                        panel.read(cx);
+                    }
+                })
+                .ok();
         });
     }
 
@@ -196,11 +216,7 @@ impl GitPanel {
         let state = match read {
             Ok(Some((repo, commits))) => State::Read(repo, Rc::new(commits)),
             Ok(None) => State::Outside,
-            Err(error) => {
-                let folder = self.folder.display();
-                log::error!("git panel: {folder} did not read: {error:#}");
-                State::Failed(format!("{error:#}").into())
-            }
+            Err(error) => State::Failed(format!("{error:#}").into()),
         };
         self.read = self.folder.clone();
         if state == self.state {
@@ -218,7 +234,10 @@ impl GitPanel {
                 commits.len()
             ),
             State::Outside => log::debug!("git panel: {} is no repository", self.folder.display()),
-            State::Reading | State::Failed(_) => {}
+            State::Failed(error) => {
+                log::error!("git panel: {} did not read: {error}", self.folder.display())
+            }
+            State::Reading => {}
         }
         self.state = state;
         cx.notify();
@@ -234,6 +253,7 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         self.error = None;
+        self.refresh.write();
         let backend = self.backend.clone();
         let source = backend.clone();
         let before = std::mem::replace(&mut self.acting, Task::ready(()));
@@ -243,10 +263,12 @@ impl GitPanel {
                 .background_spawn(async move { work(&backend, &top) })
                 .await;
             let acted = |panel: &mut Self, cx: &mut Context<Self>| {
+                panel.refresh.wrote();
                 if panel.backend != source {
                     if let Err(error) = done {
                         log::error!("git panel: {what} on previous connection: {error:#}");
                     }
+                    panel.read(cx);
                     return;
                 }
                 match done {

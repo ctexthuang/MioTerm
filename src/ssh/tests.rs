@@ -22,7 +22,19 @@ fn a_new_host_defaults_to_loopback_without_replacing_saved_addresses() {
 fn ssh_runs_directly_with_arguments_not_through_a_shell() {
     assert_eq!(
         host().arguments().unwrap(),
-        ["-tt", "-p", "22", "-l", "root", "--", "192.168.0.57"]
+        [
+            "-tt",
+            "-p",
+            "22",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-l",
+            "root",
+            "--",
+            "192.168.0.57"
+        ]
     );
 }
 
@@ -73,7 +85,20 @@ fn an_empty_user_leaves_the_login_to_openssh() {
     }
     .arguments()
     .unwrap();
-    assert_eq!(args, ["-tt", "-p", "22", "--", "192.168.0.57"]);
+    assert_eq!(
+        args,
+        [
+            "-tt",
+            "-p",
+            "22",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=3",
+            "--",
+            "192.168.0.57"
+        ]
+    );
 }
 
 #[test]
@@ -89,7 +114,7 @@ fn identity_paths_with_spaces_stay_one_argument() {
     }
     .arguments()
     .unwrap();
-    assert_eq!(args[5..], ["-i", &identity, "--", "192.168.0.57"]);
+    assert_eq!(args[9..], ["-i", &identity, "--", "192.168.0.57"]);
 }
 
 #[test]

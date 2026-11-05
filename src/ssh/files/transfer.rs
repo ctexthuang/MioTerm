@@ -90,6 +90,7 @@ impl Transfer {
         command.args(self.connection.options());
         command.args(["-b", "-", "-P", &self.connection.host.port.to_string()]);
         let host = &self.connection.host;
+        command.args(host.keepalive.arguments());
         command.args(host.auth.options());
         if !host.user.is_empty() {
             command.args(["-o", &format!("User={}", host.user)]);

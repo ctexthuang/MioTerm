@@ -83,7 +83,13 @@ impl Workspace {
                 self.sessions[index].control = Some(control);
                 self.sidebar_hosts = false;
                 self.select(index, window, cx);
-                log::info!("ssh: session starts for {}", host.destination());
+                log::info!(
+                    "ssh: session starts for {}; keepalive enabled={}, interval={}s, missed={}",
+                    host.destination(),
+                    host.keepalive.enabled,
+                    host.keepalive.interval,
+                    crate::ssh::Keepalive::MISSED,
+                );
             }
             Err(error) => {
                 log::error!("ssh: connection failed: {error:#}");

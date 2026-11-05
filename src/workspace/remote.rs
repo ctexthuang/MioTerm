@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-fn endpoint(session: &Session) -> Option<Remote> {
+pub(super) fn endpoint(session: &Session) -> Option<Remote> {
     Some(Remote {
         session: session.terminal.entity_id().as_u64(),
         host: session.remote.clone()?,
@@ -54,6 +54,7 @@ impl Workspace {
                 });
             }
         } else {
+            self.remote_files.update(cx, |files, _| files.hide());
             let folder = session.folder.clone();
             self.files.update(cx, |files, cx| files.show(&folder, cx));
             self.git.update(cx, |git, cx| git.show(&folder, cx));

@@ -10,7 +10,7 @@ use ely_gpui_component::lists::GitStatus;
 use crate::git;
 
 /// `path` as marks key it: on macOS, composed, as Git.
-pub(super) fn mark_key(path: &Path) -> Cow<'_, Path> {
+pub(crate) fn mark_key(path: &Path) -> Cow<'_, Path> {
     #[cfg(target_os = "macos")]
     if let Some(text) = path.to_str()
         && !unicode_normalization::is_nfc(text)

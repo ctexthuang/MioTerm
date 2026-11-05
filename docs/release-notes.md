@@ -1,4 +1,4 @@
-# MioTerm 0.0.9
+# MioTerm 0.1.0
 
 MioTerm is an independent fork of ELYTerminal, extended with SSH hosts,
 SFTP transfers, remote Git, system monitoring and encrypted Gitee/WebDAV sync.
@@ -8,31 +8,31 @@ Upstream: https://github.com/ELY-Open-Source/ELYTerminal
 The upstream copyright and MIT license are retained. Bundled license
 files are included with each package. This is not an upstream release.
 
-## New In 0.0.9
+## New In 0.1.0
 
-- Integrated ELYTerminal 0.2.0 at upstream commit `6936b6f`, preserving MioTerm's
+- Integrated ELYTerminal 0.2.2 at upstream commit `ba664ef`, preserving MioTerm's
   SSH, SFTP, remote Git, monitoring and encrypted synchronization features.
-  Upstream additions include English/Chinese UI, custom themes and backgrounds,
-  session menus and reordering, Kitty graphics, clipboard permissions, packed
-  scrollback, terminal performance improvements and platform fixes.
-- A host without a saved SSH password no longer blocks the entire sync.
-  Connection details still synchronize, with a warning about the missing secret.
-  A missing selected key skips that host's local export without discarding cloud
-  material or preventing other hosts from synchronizing. Corrupt vaults, invalid
-  keys, conflicting credentials and network failures still report errors.
-- Deleting a saved host records a persistent local exclusion. Switching views,
-  automatic sync, Sync now and Restore no longer bring that host back. Excluded
-  keys and credentials are not restored. Explicitly saving the host again clears
-  its exclusion; distinct known private-key variants remain independent.
-- Deletion protection is local to this device, not cloud deletion propagation.
-  Other devices and encrypted cloud history remain intact. Hosts deleted with an
-  older build must be deleted once again after upgrading. Do not run older and
-  newer builds against the same configuration directory simultaneously.
-- Managed SSH sessions accept streamed Kitty images but cannot read client-side
-  files, temporary files or shared memory through graphics commands. Their OSC 7
-  directory reports always use remote POSIX paths, including localhost reports.
-- Added a Chinese manual testing guide in `docs/testing.md`, including a quiet
-  Kitty graphics sample that does not insert protocol replies into the shell.
+  Additions since the previous MioTerm release include launch profiles, detected
+  local shells, interface and CJK font settings, font weight, antialiasing,
+  smooth cursor motion, cmd integration and the Touch Bar window-close fix.
+- Visible SSH Files panes refresh local and remote lists and Git marks every
+  second. Hidden panels pause polling; slow reads do not overlap. Selection and
+  address drafts survive refreshes, and stale session results are discarded.
+- The Git panel refreshes local and remote status, branches and history every
+  second, coordinating reads with writes and preserving commit drafts.
+- With Files menu enabled, right-click the Files icon to choose a folder for a
+  new session. Local sessions use the native chooser; managed SSH sessions use
+  a remote directory browser and reconnect the same host in the chosen folder.
+- Each host has an SSH keepalive switch and a 1–3600 second interval. The default
+  is enabled, every 30 idle seconds, with three unanswered checks before exit.
+  Terminal, SFTP, Git and monitoring use the same policy on the next connection.
+  This is a local transport preference and is not included in cloud archives.
+- Managed SSH sessions retain the client-side graphics restrictions and remote
+  POSIX directory handling. Sync retains credential omission warnings and local
+  deletion exclusions; cloud deletion propagation and snapshot cleanup are not
+  part of this release. Existing cloud history is preserved.
+- Updated the Chinese testing guide with upstream features, remote refresh,
+  folder-based sessions and keepalive checks.
 
 Managed keys remain ordinary OpenSSH identity files, preserving their original
 key encryption format. They are protected by Unix 0700/0600 permissions or
@@ -40,12 +40,14 @@ Windows current-user ACLs, not by an additional local vault encryption layer.
 Passwords and key passphrases remain in the encrypted application credential
 vault. Cloud archives use the separate synchronization passphrase.
 
-Local verification passed 518 core regression tests, all-target Clippy with
+Local verification passed 588 core regression tests, all-target Clippy with
 warnings denied, formatting and the handwritten-file size checks. The opt-in
 live Gitee test was not run; four environment-dependent shell tests were filtered.
 Isolated application-vault, askpass and RSA PEM import tests also passed. Coverage
-includes repeated restore after deletion, explicit re-add, unavailable keys,
-credential omission, encrypted mock WebDAV/Gitee sync and remote graphics policy.
+includes credential omission, encrypted mock WebDAV/Gitee sync, remote graphics
+policy, refresh coordination and OpenSSH keepalive option resolution. Isolated
+macOS UI checks covered remote directory sessions, local/remote refresh, Git
+draft preservation, and keepalive editing, stepping and persistence.
 Native Windows/Linux runtime checks were not run on the macOS development host;
 automated platform checks and packaging run in the tag-triggered Release workflow.
 

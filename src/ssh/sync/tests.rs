@@ -160,6 +160,27 @@ fn encryption_passphrases_require_at_least_six_characters() {
 }
 
 #[test]
+fn keepalive_is_local_and_does_not_change_archive_or_credential_identity() {
+    let folder = Folder::new();
+    let mut local = folder.local("keepalive-key");
+    let before = serde_json::to_value(Archive::capture(&local).unwrap()).unwrap();
+    local.hosts[0].keepalive = crate::ssh::Keepalive {
+        enabled: false,
+        interval: 75,
+    };
+    let archive = Archive::capture(&local).unwrap();
+    assert_eq!(before, serde_json::to_value(&archive).unwrap());
+    let restored = archive
+        .restore(local.clone(), &folder.0.join("existing"))
+        .unwrap();
+    assert_eq!(restored.hosts, local.hosts);
+    let fresh = archive
+        .restore(Connections::default(), &folder.0.join("new"))
+        .unwrap();
+    assert_eq!(fresh.hosts[0].keepalive, crate::ssh::Keepalive::default());
+}
+
+#[test]
 fn empty_encryption_passphrases_ask_for_input_instead_of_reporting_a_length_error() {
     let error = crypto::validate_passphrase(&SecretString::from(String::new())).unwrap_err();
     assert_eq!(

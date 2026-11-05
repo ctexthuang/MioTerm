@@ -159,13 +159,29 @@ impl Workspace {
         let settings = SettingsStore::get(cx);
         let shown = self.folder_actions && settings.files_menu && settings.panel == PanelTab::Files;
         let workspace = cx.entity();
+        let remote = self
+            .sessions
+            .get(self.active)
+            .is_some_and(|session| session.remote.is_some());
         let choose = Button::new(
             "choose-session-folder",
-            text(cx, "et.files.choose_folder", &[]),
+            text(
+                cx,
+                if remote {
+                    "et.files.choose_remote_folder"
+                } else {
+                    "et.files.choose_folder"
+                },
+                &[],
+            ),
         )
         .variant(ButtonVariant::Ghost)
         .size(ControlSize::Sm)
-        .icon(IconName::Folder)
+        .icon(if remote {
+            IconName::Server
+        } else {
+            IconName::Folder
+        })
         .full_width()
         .disabled(self.choosing_folder)
         .on_click(move |_, window, cx| {

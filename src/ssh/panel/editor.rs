@@ -13,6 +13,8 @@ use gpui::{
 use super::HostPanel;
 use crate::ssh::{Authentication, Host};
 
+mod keepalive;
+
 pub(super) struct Editor {
     pub id: u64,
     pub quick: bool,
@@ -26,6 +28,7 @@ pub(super) struct Editor {
     pub remember: bool,
     pub secret: Entity<TextInput>,
     pub original: Host,
+    keepalive: crate::ssh::Keepalive,
 }
 
 impl Editor {
@@ -71,6 +74,7 @@ impl Editor {
             auth,
             remember: host.remember_secret,
             secret,
+            keepalive: host.keepalive,
             original,
         }
     }
@@ -93,6 +97,7 @@ impl Editor {
             },
             auth: self.auth,
             remember_secret: self.remember && self.auth.has_secret(),
+            keepalive: self.keepalive,
         };
         host.validate()?;
         Ok(host)
@@ -209,6 +214,7 @@ impl Editor {
                 );
             }
         }
+        dialog = dialog.child(self.keepalive_controls(busy, cx));
         if let Some(error) = error {
             dialog = dialog.child(
                 ely_gpui_component::feedback::Alert::new(

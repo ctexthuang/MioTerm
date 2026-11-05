@@ -13,6 +13,8 @@ use super::{Entry, Listing, Remote, RemotePath, Transfer};
 
 mod actions;
 mod confirm;
+mod refresh;
+mod status;
 mod upload;
 mod view;
 
@@ -42,6 +44,11 @@ struct Browser {
     selected: Vec<SharedString>,
     error: Option<String>,
     busy: bool,
+    refreshing: bool,
+    marks: status::Marks,
+    git_error: Option<String>,
+    marking: bool,
+    checking: Option<Task<()>>,
     generation: usize,
     cancel: Cancel,
     reading: Option<Task<()>>,
@@ -60,6 +67,8 @@ pub struct RemoteFiles {
     transferring: Option<Task<()>>,
     transfer_status: Option<String>,
     transfer_error: Option<String>,
+    front: bool,
+    _polling: Task<()>,
     _inputs: Vec<Subscription>,
 }
 
@@ -133,6 +142,8 @@ impl RemoteFiles {
             transferring: None,
             transfer_status: None,
             transfer_error: None,
+            front: false,
+            _polling: Self::poll(cx),
             _inputs: inputs,
         }
     }
@@ -199,6 +210,7 @@ impl RemoteFiles {
         disconnected: bool,
         cx: &mut Context<Self>,
     ) {
+        self.front = true;
         let changed = self.connection.as_ref() != Some(&connection);
         let ended = self.disconnected != disconnected;
         if changed {
@@ -211,6 +223,9 @@ impl RemoteFiles {
             self.remote.cancel = Cancel::default();
             self.remote.reading = None;
             self.remote.busy = false;
+            self.remote.refreshing = false;
+            self.remote.checking = None;
+            self.remote.marking = false;
             self.remote.error = Some("SSH session disconnected.".into());
         } else if changed || ended || folder != self.remote.folder || self.remote.listing.is_none()
         {
@@ -226,11 +241,25 @@ impl RemoteFiles {
         self.navigate(true, self.local.folder.clone(), cx);
     }
 
+    pub fn hide(&mut self) {
+        self.front = false;
+    }
+
     pub fn refresh_remote(&mut self, cx: &mut Context<Self>) {
         self.navigate(false, self.remote.folder.clone(), cx);
     }
 
     fn navigate(&mut self, local: bool, folder: Option<RemotePath>, cx: &mut Context<Self>) {
+        self.load(local, folder, false, cx);
+    }
+
+    fn load(
+        &mut self,
+        local: bool,
+        folder: Option<RemotePath>,
+        background: bool,
+        cx: &mut Context<Self>,
+    ) {
         if !local && self.disconnected {
             return;
         }
@@ -239,14 +268,24 @@ impl RemoteFiles {
         let browser = self.browser_mut(local);
         browser.cancel = Cancel::default();
         let cancel = browser.cancel.0.clone();
+        let ticket = cancel.clone();
         if browser.folder != folder {
             browser.listing = None;
             browser.selected.clear();
+            browser.marks = status::Marks::default();
+            browser.git_error = None;
+            browser.checking = None;
+            browser.marking = false;
             browser.generation += 1;
         }
         browser.folder = folder.clone();
-        browser.error = None;
-        browser.busy = true;
+        if !background {
+            browser.error = None;
+        }
+        browser.busy = !background;
+        browser.refreshing = background;
+        let generation = browser.generation;
+        let source = connection.clone();
         let read = cx.background_spawn(async move {
             if local {
                 let path = match folder {
@@ -264,24 +303,62 @@ impl RemoteFiles {
         self.browser_mut(local).reading = Some(cx.spawn(async move |panel, cx| {
             let result = read.await;
             panel
-                .update(cx, |panel, cx| panel.store(local, result, cx))
+                .update(cx, |panel, cx| {
+                    if panel.browser(local).generation != generation
+                        || !Arc::ptr_eq(&panel.browser(local).cancel.0, &ticket)
+                        || (!local && panel.connection != source)
+                    {
+                        return;
+                    }
+                    panel.store(local, result, background, cx);
+                })
                 .ok();
         }));
-        cx.notify();
+        if !background {
+            cx.notify();
+        }
     }
 
-    fn store(&mut self, local: bool, result: anyhow::Result<Listing>, cx: &mut Context<Self>) {
+    fn store(
+        &mut self,
+        local: bool,
+        result: anyhow::Result<Listing>,
+        background: bool,
+        cx: &mut Context<Self>,
+    ) {
         let browser = self.browser_mut(local);
         browser.busy = false;
+        browser.refreshing = false;
         match result {
             Ok(listing) => {
-                log::info!(
-                    "{} files: folder {}",
+                if background
+                    && browser.listing.as_ref() == Some(&listing)
+                    && browser.error.is_none()
+                {
+                    return;
+                }
+                log::debug!(
+                    "{} files: refreshed {}",
                     if local { "local" } else { "remote" },
                     listing.path.shown()
                 );
+                if browser
+                    .listing
+                    .as_ref()
+                    .is_some_and(|old| old.path != listing.path)
+                {
+                    browser.checking = None;
+                    browser.marking = false;
+                    browser.marks = status::Marks::default();
+                    browser.git_error = None;
+                }
+                browser.error = None;
                 browser.folder = Some(listing.path.clone());
-                let keys = listing.entries.iter().map(view::key).collect::<Vec<_>>();
+                let keys = listing
+                    .entries
+                    .iter()
+                    .map(view::key)
+                    .collect::<std::collections::HashSet<_>>();
                 browser.selected.retain(|key| keys.contains(key));
                 browser.listing = Some(listing);
                 let path = browser.folder.clone().expect("a listed folder");
@@ -290,22 +367,32 @@ impl RemoteFiles {
                 } else {
                     &self.remote_path
                 };
-                input.update(cx, |input, cx| {
-                    input.set_text(String::from_utf8_lossy(&path.0), cx)
-                });
-                if !local && let Some(connection) = &self.connection {
+                if !background {
+                    input.update(cx, |input, cx| {
+                        input.set_text(String::from_utf8_lossy(&path.0), cx)
+                    });
+                }
+                if !local
+                    && !background
+                    && let Some(connection) = &self.connection
+                {
                     cx.emit(FolderChanged {
                         connection: connection.clone(),
                         folder: path,
                     });
                 }
+                self.check_marks(local, cx);
             }
             Err(error) => {
+                let error = format!("{error:#}");
+                if browser.error.as_ref() == Some(&error) {
+                    return;
+                }
                 log::error!(
                     "{} files: {error:#}",
                     if local { "local" } else { "remote" }
                 );
-                browser.error = Some(format!("{error:#}"));
+                browser.error = Some(error);
             }
         }
         cx.notify();

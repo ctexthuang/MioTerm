@@ -26,8 +26,6 @@ impl Remote {
             "StrictHostKeyChecking=yes",
             "ConnectTimeout=5",
             "ConnectionAttempts=1",
-            "ServerAliveInterval=5",
-            "ServerAliveCountMax=2",
             "ClearAllForwardings=yes",
             "RemoteCommand=none",
             "PermitLocalCommand=no",

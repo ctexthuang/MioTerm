@@ -115,6 +115,7 @@ pub struct Workspace {
     found: Vec<crate::profiles::Found>,
     choosing_folder: bool,
     folder_actions: bool,
+    remote_choice: Option<folder::remote::Choice>,
     _settings: Subscription,
     _acted: Subscription,
     _remote_folder: Subscription,
@@ -181,6 +182,7 @@ impl Workspace {
             found: crate::profiles::detected(),
             choosing_folder: false,
             folder_actions: false,
+            remote_choice: None,
             _settings: cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
                 this.background.follow(window, SettingsStore::get(cx));
                 let settings = SettingsStore::get(cx);
@@ -443,5 +445,6 @@ impl Render for Workspace {
                     .when(self.background.see_through(), ResizeBorder::glass)
                     .child(FocusScope::new(&self.focus).root().size_full().child(shell)),
             )
+            .children(self.remote_folder_dialog(cx))
     }
 }

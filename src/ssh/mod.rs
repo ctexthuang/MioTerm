@@ -9,6 +9,7 @@ pub mod auth;
 pub mod control;
 mod deleted;
 pub mod files;
+mod keepalive;
 mod keys;
 pub mod panel;
 mod prepare;
@@ -22,6 +23,7 @@ mod tests;
 pub(crate) mod vault;
 
 pub use auth::Authentication;
+pub use keepalive::Keepalive;
 pub use store::HostStore;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +40,8 @@ pub struct Host {
     pub auth: Authentication,
     #[serde(default)]
     pub remember_secret: bool,
+    #[serde(default, skip_serializing_if = "Keepalive::is_default")]
+    pub keepalive: Keepalive,
 }
 
 impl Default for Host {
@@ -52,12 +56,14 @@ impl Default for Host {
             identity: String::new(),
             auth: Authentication::default(),
             remember_secret: false,
+            keepalive: Keepalive::default(),
         }
     }
 }
 
 impl Host {
     pub fn validate(&self) -> anyhow::Result<()> {
+        self.keepalive.validate()?;
         ensure!(
             self.auth != Authentication::PrivateKey || !self.identity.is_empty(),
             "ssh: private key authentication requires an identity file"
@@ -150,6 +156,7 @@ impl Host {
     fn arguments(&self) -> anyhow::Result<Vec<String>> {
         self.validate()?;
         let mut args = vec!["-tt".into(), "-p".into(), self.port.to_string()];
+        args.extend(self.keepalive.arguments());
         args.extend(self.auth.options());
         if !self.user.is_empty() {
             args.extend(["-l".into(), self.user.clone()]);
@@ -264,6 +271,7 @@ impl Connections {
                     recent.host.identity = host.identity.clone();
                     recent.host.auth = host.auth;
                     recent.host.remember_secret = host.remember_secret;
+                    recent.host.keepalive = host.keepalive;
                 }
             }
             *saved = host.clone();

@@ -87,7 +87,7 @@ impl RemotePath {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub name: RemotePath,
@@ -97,7 +97,7 @@ pub struct Entry {
     pub size: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Listing {
     pub path: RemotePath,

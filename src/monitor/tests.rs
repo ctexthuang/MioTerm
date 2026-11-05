@@ -212,6 +212,41 @@ fn remote_monitor_never_prompts_or_accepts_unknown_host_keys() {
 }
 
 #[cfg(unix)]
+#[test]
+fn remote_monitor_respects_host_keepalive_with_and_without_a_shared_connection() {
+    for enabled in [true, false] {
+        let host = crate::ssh::Host {
+            keepalive: crate::ssh::Keepalive {
+                enabled,
+                interval: 75,
+            },
+            ..Default::default()
+        };
+        for socket in [None, Some(std::path::Path::new("/tmp/a socket"))] {
+            let command = remote::command(&host, socket).unwrap();
+            let output = std::process::Command::new(command.get_program())
+                .args(["-G", "-F", "/dev/null"])
+                .args(command.get_args())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let resolved = String::from_utf8(output.stdout).unwrap();
+            let interval = if enabled { 75 } else { 0 };
+            assert!(
+                resolved
+                    .lines()
+                    .any(|line| line == format!("serveraliveinterval {interval}"))
+            );
+            assert!(resolved.lines().any(|line| line == "serveralivecountmax 3"));
+        }
+    }
+}
+
+#[cfg(unix)]
 fn fixture(output: &str, status: u8) -> std::process::Command {
     let mut command = std::process::Command::new("/bin/sh");
     command.args([

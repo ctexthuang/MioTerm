@@ -77,6 +77,7 @@ impl PortableHost {
             identity,
             auth: self.auth,
             remember_secret: false,
+            keepalive: Default::default(),
         }
     }
 

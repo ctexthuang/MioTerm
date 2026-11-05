@@ -26,13 +26,14 @@ mod marks;
 mod menu;
 
 use listing::{Listing, list};
-use marks::{Marked, mark_key, remark};
+pub(crate) use marks::mark_key;
+use marks::{Marked, remark};
 
 /// How often Files reads its open folders again.
 const POLL: Duration = Duration::from_secs(1);
 
 /// Git's mark on a node: its letter and tint; a dot on a folder that holds changes.
-fn badge(node: TreeNode, mark: Option<GitStatus>, dirty: bool) -> TreeNode {
+pub(crate) fn badge(node: TreeNode, mark: Option<GitStatus>, dirty: bool) -> TreeNode {
     let (note, tone) = match mark {
         Some(GitStatus::Modified) => ("M", Tone::Warning),
         Some(GitStatus::Added) => ("A", Tone::Success),

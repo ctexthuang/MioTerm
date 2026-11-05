@@ -137,11 +137,17 @@ impl RemoteFiles {
                 } else {
                     IconName::File
                 });
-                if entry.directory {
+                let row = if entry.directory {
                     row
                 } else {
                     row.note(size(entry.size))
-                }
+                };
+                let name = super::status::key(local, &entry.name.0);
+                crate::files::badge(
+                    row,
+                    browser.marks.direct.get(name.as_ref()).copied(),
+                    browser.marks.dirty.contains(name.as_ref()),
+                )
             });
         let tree = Tree::new(
             (
@@ -173,6 +179,29 @@ impl RemoteFiles {
                     .child(Input::new(path).size(ControlSize::Sm)),
             )
             .children(browser.busy.then(|| Caption::new("Loading…").px_2()))
+            .children(browser.git_error.as_ref().map(|error| {
+                div()
+                    .id(if local {
+                        "local-git-error-scroll"
+                    } else {
+                        "remote-git-error-scroll"
+                    })
+                    .max_h(cx.theme().label_width())
+                    .overflow_y_scroll()
+                    .px_2()
+                    .child(
+                        Alert::new(
+                            if local {
+                                "local-git-error"
+                            } else {
+                                "remote-git-error"
+                            },
+                            Severity::Warning,
+                            "Git status unavailable",
+                        )
+                        .body(error.clone()),
+                    )
+            }))
             .children(browser.error.as_ref().map(|error| {
                 div()
                     .id(if local {

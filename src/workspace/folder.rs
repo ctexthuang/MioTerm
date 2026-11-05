@@ -6,11 +6,26 @@ use gpui::{App, Context, PathPromptOptions, PromptLevel, Window};
 
 use super::Workspace;
 
+pub(super) mod remote;
+
 impl Workspace {
     pub(super) fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.choosing_folder {
             return;
         }
+        let session = &self.sessions[self.active];
+        if let Some(connection) = super::remote::endpoint(session) {
+            if session.disconnected {
+                return failed(anyhow::anyhow!("ssh: session disconnected"), window, cx);
+            }
+            return self.choose_remote_folder(
+                connection,
+                session.remote_folder.clone(),
+                window,
+                cx,
+            );
+        }
+        let command = (session.shell.clone(), session.args.clone());
         self.choosing_folder = true;
         log::info!("app: choosing a folder for a new session");
         let chosen = cx.prompt_for_paths(PathPromptOptions {
@@ -36,7 +51,14 @@ impl Workspace {
                 cx.notify();
                 match result {
                     Ok(Some(folder)) => {
-                        if let Err(error) = this.here(folder, window, cx) {
+                        if let Err(error) = this.open(
+                            &command.0,
+                            command.1,
+                            crate::term::shell::Start::In(folder),
+                            None,
+                            window,
+                            cx,
+                        ) {
                             failed(error, window, cx);
                         }
                     }

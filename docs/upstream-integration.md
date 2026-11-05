@@ -7,7 +7,7 @@
 - Integrated upstream: `ba664ef6ef0cdfcb35dc6b65d538cc58e7ecd313` (0.2.2, fetched 2026-11-04).
 - Upstream repository: https://github.com/ELY-Open-Source/ELYTerminal.
 - MioTerm keeps its own version, release tags and update endpoint.
-- This integration is development code; MioTerm `v0.0.9` still uses upstream 0.2.0.
+- MioTerm `v0.1.0` includes this integration; `v0.0.9` uses upstream 0.2.0.
 
 ## New Since Upstream 0.2.0
 
@@ -57,10 +57,15 @@ remote start directory. Local new-session actions never run the SSH executable
 as though it were the configured local shell. WSL Git routes through the local
 backend only; remote Git always runs on its selected SSH host.
 
-Local Files polling pauses while the remote file panes are shown. The new
-cmd OSC 9;9 directory reports apply only to local sessions; managed SSH
-continues to follow remote OSC 7 paths. The previously rolled-back sync
-redesign is not included: `src/ssh` remains unchanged from MioTerm v0.0.9.
+Local Files polling pauses while the remote file panes are shown. MioTerm's
+dual-pane Files now polls both panes and their Git marks once per second while
+visible. The Git panel also polls local and remote repositories, serializing
+refreshes with pending Git actions and preserving drafts. The Files tab's folder
+action uses a native chooser for local sessions and an SSH directory browser
+for managed remote sessions, reconnecting the same host in the chosen directory.
+Hidden panels stop polling; slow requests coalesce and stale session results
+are discarded. cmd OSC 9;9 reports remain local; managed SSH follows remote OSC 7.
+The previously rolled-back synchronization redesign is not included.
 
 The upstream website and its additional push/PR packaging workflow are excluded.
 The imported `docs/en_us` and `docs/zh_cn` are upstream terminal references,
@@ -110,6 +115,13 @@ On macOS with Rust 1.95.0 and runtime shaders:
 - The profile menu detects shells and opens a saved command with its arguments and folder.
 - The settings window shows interface font controls and retains Sync navigation.
 - No live Gitee or loopback SSH tests ran for this integration.
+
+The subsequent panel adaptation passes 581 core tests, all-target Clippy and the
+release build. Native screenshots against an isolated loopback sshd verify dual
+Files refresh with Git marks, local/remote Git branch and history polling, draft
+preservation, and new SSH sessions in directories containing spaces and quotes.
+Tests use generated keys and isolated known-host/configuration files; no real
+server or cloud data is involved.
 
 The four filtered tests require fish, PowerShell or platform-specific shell
 environments absent on this host. Windows and Linux native runtime checks
