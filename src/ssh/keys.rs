@@ -19,7 +19,7 @@ pub(super) fn folder() -> anyhow::Result<std::path::PathBuf> {
     Ok(crate::settings::folder()?.join("keys"))
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Key {
     private: String,

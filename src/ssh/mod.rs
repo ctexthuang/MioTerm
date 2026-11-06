@@ -14,6 +14,7 @@ mod keys;
 pub mod panel;
 mod prepare;
 mod private;
+mod records;
 pub mod remote;
 pub mod shell;
 mod store;
@@ -24,6 +25,7 @@ pub(crate) mod vault;
 
 pub use auth::Authentication;
 pub use keepalive::Keepalive;
+pub use records::Record;
 pub use store::HostStore;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +44,8 @@ pub struct Host {
     pub remember_secret: bool,
     #[serde(default, skip_serializing_if = "Keepalive::is_default")]
     pub keepalive: Keepalive,
+    #[serde(default, skip_serializing_if = "Record::is_empty")]
+    pub sync: Box<Record>,
 }
 
 impl Default for Host {
@@ -57,12 +61,14 @@ impl Default for Host {
             auth: Authentication::default(),
             remember_secret: false,
             keepalive: Keepalive::default(),
+            sync: Box::default(),
         }
     }
 }
 
 impl Host {
     pub fn validate(&self) -> anyhow::Result<()> {
+        self.sync.validate()?;
         self.keepalive.validate()?;
         ensure!(
             self.auth != Authentication::PrivateKey || !self.identity.is_empty(),
@@ -153,6 +159,20 @@ impl Host {
         )
     }
 
+    fn update_recent(&self, previous: &Host, recent: &mut Host) {
+        if (&self.address, self.port, &self.user)
+            == (&previous.address, previous.port, &previous.user)
+            && recent.id == previous.id
+            && recent.same_target(previous)
+        {
+            recent.identity = self.identity.clone();
+            recent.auth = self.auth;
+            recent.remember_secret = self.remember_secret;
+            recent.keepalive = self.keepalive;
+            recent.sync = self.sync.clone();
+        }
+    }
+
     fn arguments(&self) -> anyhow::Result<Vec<String>> {
         self.validate()?;
         let mut args = vec!["-tt".into(), "-p".into(), self.port.to_string()];
@@ -207,6 +227,7 @@ pub struct Connections {
     pub recent: Vec<Recent>,
     #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub(crate) deleted_hosts: std::collections::BTreeSet<deleted::Deletion>,
+    pub(crate) records: records::State,
 }
 
 impl Default for Connections {
@@ -216,6 +237,7 @@ impl Default for Connections {
             hosts: Vec::new(),
             recent: Vec::new(),
             deleted_hosts: Default::default(),
+            records: Default::default(),
         }
     }
 }
@@ -223,9 +245,15 @@ impl Default for Connections {
 impl Connections {
     pub fn validate(&self) -> anyhow::Result<()> {
         deleted::validate(&self.deleted_hosts)?;
+        self.records.validate()?;
         let mut ids = std::collections::HashSet::new();
+        let mut sync_ids = std::collections::HashSet::new();
         for host in &self.hosts {
             host.validate()?;
+            ensure!(
+                host.sync.is_empty() || sync_ids.insert(&host.sync.id),
+                "SSH sync: duplicate record identity"
+            );
             ensure!(
                 host.id > 0 && host.id < self.next_id && ids.insert(host.id),
                 "ssh: duplicate, zero or unallocated host id"
@@ -242,7 +270,10 @@ impl Connections {
         Ok(())
     }
 
-    pub fn upsert(&mut self, host: Host) -> anyhow::Result<Host> {
+    pub fn upsert(&mut self, mut host: Host) -> anyhow::Result<Host> {
+        host.validate()?;
+        self.migrate_records()?;
+        host.sync = self.edited_record(&host)?.into();
         let host = self.merge_host(host)?;
         self.allow_host(&host);
         Ok(host)
@@ -263,16 +294,8 @@ impl Connections {
                 .iter_mut()
                 .find(|saved| saved.id == host.id)
                 .context("ssh: the host being edited no longer exists")?;
-            let same_destination =
-                (&host.address, host.port, &host.user) == (&saved.address, saved.port, &saved.user);
             for recent in &mut self.recent {
-                if same_destination && recent.host.id == saved.id && recent.host.same_target(saved)
-                {
-                    recent.host.identity = host.identity.clone();
-                    recent.host.auth = host.auth;
-                    recent.host.remember_secret = host.remember_secret;
-                    recent.host.keepalive = host.keepalive;
-                }
+                host.update_recent(saved, &mut recent.host);
             }
             *saved = host.clone();
         }
@@ -300,10 +323,15 @@ impl Connections {
             .position(|host| host.id == id)
             .context("ssh: the host being deleted no longer exists")?;
         let host = self.hosts.remove(index);
-        self.deleted_hosts.insert(deleted::Deletion::capture(&host));
+        if !host.sync.id.is_empty() {
+            self.records.deleted.insert(host.sync.id.clone());
+        }
+        if host.sync.revision == 0 {
+            self.deleted_hosts.insert(deleted::Deletion::capture(&host));
+        }
         self.recent.retain(|recent| recent.host.id != id);
         log::info!(
-            "ssh: deleted host {:?}; local sync exclusion recorded",
+            "ssh: deleted host {:?}; synchronized deletion recorded",
             host.label()
         );
         Ok(host)

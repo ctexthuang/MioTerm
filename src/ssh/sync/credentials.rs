@@ -4,7 +4,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::ssh::{Host, auth, vault::Vault};
 
-#[derive(PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(super) struct Credential(pub String);
 
@@ -27,6 +27,9 @@ impl Credential {
 pub(super) trait Store {
     fn load(&self, host: &Host) -> anyhow::Result<Option<Zeroizing<String>>>;
     fn insert(&self, host: &Host, secret: &str) -> anyhow::Result<()>;
+    fn replace(&self, _: &Host, _: &str, _: &str) -> anyhow::Result<()> {
+        anyhow::bail!("SSH sync: credential store cannot replace an existing credential")
+    }
 }
 
 pub(super) struct VaultStore;
@@ -38,6 +41,10 @@ impl Store for VaultStore {
 
     fn insert(&self, host: &Host, secret: &str) -> anyhow::Result<()> {
         auth::import(host, secret)
+    }
+
+    fn replace(&self, host: &Host, expected: &str, secret: &str) -> anyhow::Result<()> {
+        auth::replace_import(host, expected, secret)
     }
 }
 

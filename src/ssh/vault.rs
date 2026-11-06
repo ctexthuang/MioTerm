@@ -80,6 +80,24 @@ impl Vault {
         self.insert_many(&[(account.into(), Zeroizing::new(value.into()))])
     }
 
+    pub fn replace(&self, account: &str, expected: &str, value: &str) -> anyhow::Result<()> {
+        self.edit(|contents| {
+            ensure!(
+                contents
+                    .entries
+                    .get(account)
+                    .is_some_and(|entry| entry.0 == expected),
+                "Credential vault: local credential changed during synchronization; retry"
+            );
+            contents
+                .entries
+                .insert(account.into(), Secret(value.into()));
+            Ok(())
+        })?;
+        log::info!("Credential vault: encrypted credential replaced at expected version");
+        Ok(())
+    }
+
     fn insert_many(&self, entries: &[(String, Zeroizing<String>)]) -> anyhow::Result<()> {
         self.edit(|contents| {
             for (account, value) in entries {

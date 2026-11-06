@@ -227,7 +227,13 @@ fn merge_keeps_variants_and_deduplicates_identical_hosts_and_shared_keys() {
     merged.merge(Archive::capture(&local).unwrap()).unwrap();
     assert_eq!(merged.hosts.len(), 1);
     let mut other = local.clone();
-    other.hosts[0].user = "root".into();
+    other
+        .upsert(Host {
+            id: 0,
+            user: "root".into(),
+            ..other.hosts[0].clone()
+        })
+        .unwrap();
     merged.merge(Archive::capture(&other).unwrap()).unwrap();
     assert_eq!(merged.hosts.len(), 2);
     assert_eq!(merged.keys.len(), 1);
@@ -264,11 +270,14 @@ fn applying_sync_never_overwrites_a_host_edited_while_the_network_was_busy() {
         before: local.hosts.clone(),
         before_next_id: local.next_id,
         before_deleted: local.deleted_hosts.clone(),
+        before_records: local.records.clone(),
+        gist_id: None,
         connections: local,
         hosts: 1,
         keys: 1,
         credentials: 0,
         warnings: Vec::new(),
+        secrets: None,
     };
     assert!(restored.apply(&mut edited).is_err());
     assert_eq!(edited.hosts[0].name, "Edited during sync");
@@ -291,11 +300,14 @@ fn applying_sync_preserves_allocated_ids_and_does_not_reassign_an_old_recent_tar
         before: local.hosts.clone(),
         before_next_id: local.next_id,
         before_deleted: local.deleted_hosts.clone(),
+        before_records: local.records.clone(),
+        gist_id: None,
         connections: imported.clone(),
         hosts: 1,
         keys: 1,
         credentials: 0,
         warnings: Vec::new(),
+        secrets: None,
     };
     let mut allocated = local.clone();
     allocated.next_id += 1;

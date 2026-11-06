@@ -13,38 +13,66 @@ losing access to the archive; there is no password reset or recovery key.
 
 - Save stores synchronization settings and explicitly remembered secrets. Secret
   fields keep their input in memory so Save can be followed by Sync now without
-  retyping them. Save itself does not upload; enabled automatic sync runs afterward.
+  retyping them. Saving settings does not trigger synchronization.
 - Sync now downloads and decrypts the existing archive, merges saved hosts,
   encrypts the combined archive, conditionally uploads it, and imports the merged
   hosts locally.
 - Restore downloads and merges the archive locally without changing the server.
   It can repair a connection whose old identity path no longer exists.
-- Exact duplicates are removed. Different names, users, ports, groups or key
-  contents are retained as distinct entries. This is an additive merge, not
-  automatic deletion propagation or last-writer-wins replacement.
+- Each connection has a stable cross-device identity. Saving edits preserves it;
+  changing a group, name, address or key replaces that record instead of adding
+  another connection. Separately created profiles retain independent identities.
 - Recent connection history, terminal contents, settings and known_hosts are
   not synchronized.
 
-## Local Deletions
+## Record Updates And Deletions
 
-Deleting a saved host persists a local exclusion in `connections.json` before
-unused credential cleanup. Sync now, automatic sync and Restore all respect
-these exclusions, so switching pages or restarting cannot reimport that host.
-Excluded private keys are not installed and excluded credentials are not restored.
-Explicitly adding the same host again clears its matching exclusion.
+The model follows Termora's stable host identity, record replacement and synced
+deletion markers. MioTerm retains its own age encryption and file-based storage.
+New identities use 256 random bits. Local numeric IDs remain local UI references.
+Every save advances a logical revision beyond revisions observed on this device;
+a random change ID breaks concurrent ties deterministically. Device wall clocks
+do not decide which edit wins. Concurrent edits of one record select one complete
+record, rather than merging individual fields. An edit after synchronization wins
+over the revisions it observed. Local keepalive preferences remain local.
 
-Exclusions contain profile and key fingerprints, never passwords or key bytes.
-They match the name, address, port, user, group, authentication method and key
-contents, not the old key path. Distinct key variants remain independent. If the
-key is unavailable at deletion, matching key-backed variants of that profile
-are excluded rather than making a broken host impossible to delete.
+Deleting persists the record ID in `connections.json`. Sync now and automatic
+sync upload these markers, and the next Sync now or Restore on another device
+removes the matching connection. Deletion wins over offline edits to that ID.
+Repeated synchronization and restart do not resurrect it. Explicitly adding the
+same host creates a fresh identity and keeps the old deletion marker intact.
+Removing a record prunes its credential and unreferenced keys from the current
+cloud archive. It does not erase provider revisions, old backups or local key files.
+Deleting an unedited legacy record also keeps its old profile exclusion. This
+matches its cloud identity even when a missing or damaged local key prevented
+the migration from computing the original key digest. Newly created identities
+remain independent of those legacy exclusions.
 
-This is local deletion protection, not cloud deletion propagation. Other devices
-and encrypted cloud backups are unchanged; a fresh device can still restore those
-entries. Use the current build on a shared configuration folder: older running
-instances can overwrite newer local deletion records, and older binaries reject
-connection files containing the new records. Do not run old and new builds
-against the same folder at once.
+Markers contain IDs only, not connection details or secrets. They grow once per
+distinct deleted identity, not per synchronization or edit. They are retained
+because forgetting them can resurrect records from an offline device. The limit
+is 10,000 markers; Gitee's encrypted size limit may be reached first. No automatic
+expiry or claim of permanently constant storage is made.
+
+Legacy files migrate automatically, retaining local IDs and key paths. Identical
+legacy records are deduplicated. An ungrouped legacy copy is retired only when
+there is one matching grouped profile with the same name, destination, method
+and key contents. Distinct keys and ambiguous multiple groups survive. Older
+fingerprint exclusions are imported and applied to legacy records; they cannot
+hide explicitly created new identities. An unavailable legacy key preserves its
+local profile with a warning; malformed keys still fail an attempted export.
+
+Explicitly saving a password or key passphrase revises every saved profile sharing
+that local credential account, including edits from Quick connect. Editing only
+a name or group leaves peer revisions unchanged. When a remote authentication
+change is applied, matching recent connections receive the new authentication
+method and key reference. Historical connections to a different destination keep
+their own authentication information.
+
+Upgrade every device before using the new shared vault. Older binaries cannot
+read the new record schema. Do not run old and new binaries against the same
+local data folder. Gitee keeps the migrated record vault separate from legacy
+snapshots so an old client cannot overwrite it.
 
 ## Remembered Secrets And Automatic Sync
 
@@ -60,24 +88,40 @@ passphrase again; a different account cannot silently reuse another account's
 encryption secret. These local secrets are not synchronized to another device.
 Configure the service credentials and archive passphrase there once as well.
 
-Sync after local changes defaults off. Enabling it also enables the required
-secret retention switches; enter the secrets and Save to activate it. It merges
-once at application startup and after changes to saved hosts, groups or saved
-SSH credentials, with a two-second debounce. Merely opening a terminal or
-updating recent connection history does not trigger an upload. It does not
-watch external private-key edits or periodically poll for remote-only changes.
+Sync policy offers Manual (default) and On change, retaining existing automatic
+sync preferences. Choosing On change enables the required secret retention
+switches; enter the secrets and Save to activate it. Each saved connection edit,
+addition, deletion or explicit credential import schedules a run after a fresh
+random delay of 10 through 29 seconds. Further edits replace that deadline.
+Startup, saving sync settings, opening terminals, recent history and imported
+cloud data do not schedule runs. Changing sync configuration cancels pending
+runs. There is no daily timer, focus/exit trigger or remote-only polling.
+External private-key edits are not watched. To receive another device's changes
+without editing locally, use Sync now or Restore.
 
 A single application-wide worker serializes manual and automatic operations,
 continues when Settings closes and does not requeue its own imported hosts.
-Local edits made during a request remain pending for the next run. Failed
-automatic operations remain visible in Settings and retry after 30 seconds,
-2 minutes and 10 minutes, then wait for a new edit or a manual request. Missing
+Local edits made during a request remain pending for the next run. Each run
+pulls and merges before uploading; a failed pull or decryption stops the upload.
+A manual Sync now or Restore consumes the preceding pending automatic request.
+Failures remain visible in Settings and wait for a new edit or manual request;
+there are no timed retries. Missing
 remembered SSH passwords or selected private-key files do not block other hosts.
-These partial successes name the affected hosts in a warning and do not schedule
-failure retries. New local edits still trigger synchronization normally.
-Disabling automatic sync stops queued runs, not a request already in progress.
-Existing additive merge and credential-conflict rules still apply; automatic
-sync is not deletion propagation or last-writer-wins replacement.
+These partial successes name the affected hosts in a warning. New local edits
+still trigger synchronization normally. Selecting Manual and saving stops queued
+runs. A network request already in progress may still finish; results are not
+applied if its configuration changed. Automatic operations use the same update
+and deletion rules as manual sync. Successful Sync now, automatic sync and Restore
+persist their completion time locally and show it in Settings; Save and failures
+do not advance it. Partial successes retain their warning beside that time.
+
+This timing follows Termora's current `2.x` sync plugin at commit
+`f0acbb40845c4ab2ddeb588951204ee9a9f727a9`:
+[SyncManager](https://github.com/TermoraDev/termora/blob/f0acbb40845c4ab2ddeb588951204ee9a9f727a9/plugins/sync/src/main/kotlin/app/termora/plugins/sync/SyncManager.kt),
+[database change hook](https://github.com/TermoraDev/termora/blob/f0acbb40845c4ab2ddeb588951204ee9a9f727a9/plugins/sync/src/main/kotlin/app/termora/plugins/sync/SyncDatabaseChangedExtension.kt)
+and [settings](https://github.com/TermoraDev/termora/blob/f0acbb40845c4ab2ddeb588951204ee9a9f727a9/plugins/sync/src/main/kotlin/app/termora/plugins/sync/CloudSyncOption.kt).
+MioTerm keeps age encryption, conditional uploads and local concurrent-edit
+checks, rather than replacing its storage or encryption with Termora's.
 
 ## Local File Vault
 
@@ -105,7 +149,7 @@ restricted temporary files, flush and atomic replacement. Unix directories are
 Windows reparse points and Unix hard-linked files are rejected. Missing keys,
 wrong keys and damaged ciphertext are errors, never a reason to reset the vault.
 
-The identity is stored beside the ciphertext so unattended startup and automatic
+The identity is stored beside the ciphertext so unattended automatic
 sync do not need a system keychain or an unlock prompt. This is local encryption,
 NOT a master-password vault: anyone who obtains both files can decrypt them.
 OS user isolation and full-disk encryption remain important. Back up both files
@@ -138,7 +182,8 @@ the encrypted archive cannot supply the secret needed to decrypt itself.
 Create a personal access token with gists permission, select Gitee, and choose
 a vault name (1-16 ASCII letters, digits, underscores or hyphens). Use the same
 account, vault name and encryption passphrase on each machine. A snippet ID is
-not needed. Optional token retention uses the application vault, not settings.
+discovered automatically and then stored in `sync.gitee.gist_id` in settings.
+Optional token retention uses the application vault, not settings.
 The token is never included in the archive and is independent of encryption.
 
 The client uses the fixed HTTPS API origin, a sensitive Bearer authorization
@@ -147,24 +192,32 @@ It does not follow snippet raw/download URLs. Public, incomplete, truncated,
 oversized or malformed snapshots are refused. Errors do not include response
 bodies, authorization headers or transport exception details.
 
-Each upload creates a new private snippet, identified by the description
-`MioTerm Sync NAME`, containing a Base64-encoded age ciphertext. The encrypted
-snapshot may not exceed 512 KiB. WebDAV supports larger archives.
+The first upload POSTs one private snippet, `MioTerm Sync NAME records`, with
+`mioterm-ssh-v2.age.base64`. Subsequent uploads PATCH that fixed snippet. Each run
+pulls and merges first, checks the downloaded ciphertext again before PATCH,
+validates the response, and reads back the complete ciphertext after uploading.
+The encrypted archive may not exceed 512 KiB. WebDAV supports larger archives.
 
-Gitee's documented gist API does not specify conditional atomic replacement.
-The client therefore never PATCHes or DELETEs an existing snippet. Concurrent
-devices create independent snapshots instead of overwriting each other. The
-next synchronization merges their union. Authenticated history inside each
-encrypted archive records snapshots already incorporated, allowing old snapshots
-to be skipped without trusting plaintext server-provided ancestry.
+Gitee's documented API does not guarantee atomic conditional replacement. These
+checks detect changes before upload and some races afterward, but cannot prevent
+two devices from overwriting each other in the GET-to-PATCH window. Repeated
+concurrent creation can also leave two record vaults: discovery refuses ambiguity
+and requires choosing `sync.gitee.gist_id` explicitly. Use WebDAV with strong ETags
+when atomic cross-device writes are required. A local worker lock alone does not
+provide that guarantee on Gitee.
 
-Listing is bounded to ten pages of 100 snippets. A full tenth page is refused
-rather than silently omitting older data. At most 32 uncovered snapshots are
-decrypted per operation. Restore is read-only. History is not automatically
-deleted; old snapshots may retain old encrypted credentials. Before manually
-deleting history in Gitee, verify that the latest complete snapshot contains
-all required data. Keep a separate backup. Use a new vault name to rotate the
-encryption passphrase; existing snapshots still require their original one.
+When no record vault exists, legacy `MioTerm Sync NAME` snapshots are read and
+consolidated once into the new format on the next upload. Their authenticated
+coverage is respected during migration. Once a record vault exists, legacy
+snapshots are not read again, preventing retired profiles from being imported.
+Old snippets are retained for recovery, not automatically deleted. Gitee may also
+retain revision history within the fixed snippet; PATCH does not control that
+provider-managed storage.
+
+Discovery is bounded to ten pages of 100 snippets, and migration to 32 uncovered
+legacy snapshots. Incomplete discovery fails. Restore remains read-only and
+therefore does not create a migrated record vault. Use a new vault name to rotate
+the encryption passphrase; existing encrypted history needs its original phrase.
 
 ## Optional SSH Credentials
 
@@ -177,18 +230,19 @@ sync. An absent private-key passphrase is allowed because the key may be
 unencrypted. Agent/default/hardware key credentials are not exported. A damaged
 or unreadable credential vault still stops synchronization.
 
-Credentials are associated with portable host metadata, authentication method
-and key digest, not the old machine's absolute identity path. Restore writes
+Credentials are associated with the stable connection ID, authentication method
+and selected key, not the old machine's absolute identity path. Restore writes
 them to the target machine's application vault using the installed key path
 and enables remembered credentials on those hosts. Credential buffers are
 zeroized on drop. No credential value is written to connections or settings.
 
-Different credentials for the same portable host stop a merge; a different
-existing local credential stops restore. Local app credential writers are
-serialized within a process, vault transactions are locked across processes,
-and imports never replace an existing different value. Resolve
-conflicting credentials explicitly; to replace an older cloud credential set,
-use a new vault (or a new WebDAV folder) after checking the local entries.
+Credentials follow the selected record revision. A newer saved password can
+replace the older synced password after checking that the local value still
+equals the value captured before the network request. The compare-and-replace
+runs in one locked vault transaction across processes. Equal-revision credential
+conflicts or unexpected local changes stop synchronization. Profiles sharing
+one credential account cannot restore conflicting secrets. Explicit legacy
+system credential imports still never overwrite an existing different value.
 Turning the switch off does not erase credentials from existing cloud archives.
 
 ## Private Keys
@@ -245,7 +299,7 @@ fragments, plain HTTP and redirects are rejected. Authorization headers are
 marked sensitive. HTTP errors report status codes without server response
 bodies or passwords.
 
-First uploads use `If-None-Match: *`; updates require the strong ETag obtained
+WebDAV first uploads use `If-None-Match: *`; updates require the strong ETag obtained
 by the preceding GET and use `If-Match`. HTTP 412 stops the operation for retry.
 Servers without strong ETags can be restored from, but their existing archives
 are never overwritten. Conditional writes depend on the WebDAV server honoring
@@ -254,7 +308,10 @@ HTTP preconditions correctly.
 The app bounds archive, key and record sizes, limits scrypt work on incoming
 archives, and uses network timeouts. If local hosts change while an operation
 is running, local application is refused for retry. An upload may already have
-completed, but the newer local edits are not overwritten.
+completed, but the newer local edits are not overwritten. Credential imports are
+deferred until that local connection check succeeds. Rejected results do not
+write passwords back for deleted hosts, and a password edited during the request
+must still pass the credential comparison before replacement.
 
 ## Verification
 
@@ -271,9 +328,9 @@ Loopback HTTP fixtures cover conditional
 GET/PUT flows, HTTP 412, authentication errors, redirects and absent ETags.
 An end-to-end loopback test uploads an encrypted archive, removes the source key,
 and restores the host and actual key into another machine's directory.
-Gitee fixtures also exercise POST-only private snapshots, pagination, public or
-truncated responses, malformed ciphertext, token rotation, independent concurrent
-snapshots, authenticated history and key/password restoration. Credential
+Gitee fixtures also exercise first POST, repeated PATCH of one fixed snippet,
+preflight conflict rejection, readback, pagination, public or truncated responses,
+malformed ciphertext, token rotation, legacy migration and key/password restoration. Credential
 tests use isolated in-memory stores or temporary encrypted file vaults. A real Gitee
 account/token is required for a live authenticated service test.
 
@@ -286,8 +343,13 @@ automatic failure retries.
 
 Deletion tests cover restart persistence, repeated cloud merges, Gitee Restore
 and WebDAV Sync, credential filtering, key variants, absent key files, deliberate
-re-addition and deletion while a request is in flight. Exclusions remain local;
-cloud snapshots and restoration on a fresh device remain intact.
+re-addition and deletion while a request is in flight. Dual-device tests verify
+group/name/address edits, stable IDs, deletion propagation through repeated sync
+and restart, stale offline clients, deterministic concurrent edits, password/key
+replacement, migration and preservation of intentional variants.
+Review regressions cover legacy deletion with missing or damaged keys, recent
+authentication changes, destination changes retaining their historical key,
+shared-password revision updates and rejected results leaving credentials alone.
 
 Vault tests cover restart persistence, six-character passphrase reuse, missing
 keys, wrong keys, tampering, permissions, symlinks, concurrent writes, atomic
@@ -298,8 +360,8 @@ on ordinary test runs; no user OS credentials or app vault are accessed.
 The ignored `ssh::sync::gitee::live` test reads only the Gitee token saved by the
 app. It uses a uniquely named temporary vault, generated encrypted SSH key and
 fixture credentials, never the user's hosts or keys. It verifies authenticated
-upload/restore, independent snapshots, application credential import and OpenSSH key
-identity, then removes only its own snapshots and fixture vault entries. On macOS:
+upload/restore, fixed-snippet updates, application credential import and OpenSSH key
+identity, then removes only its own test snippet and fixture vault entries. On macOS:
 
 ```sh
 cargo test --release --features gpui_platform/runtime_shaders --lib ssh::sync::gitee::live:: -- --ignored --nocapture

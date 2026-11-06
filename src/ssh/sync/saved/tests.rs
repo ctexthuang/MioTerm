@@ -196,3 +196,23 @@ fn file_vault_remembers_secrets_across_profile_and_storage_reconstruction() {
             .all(|account| restarted.get(account).unwrap().is_none())
     );
 }
+
+#[test]
+fn existing_policy_and_success_time_survive_restart_and_invalid_times_are_rejected() {
+    let mut profile = gitee();
+    let old = serde_json::to_value(&profile.settings).unwrap();
+    let mut old = old.as_object().unwrap().clone();
+    old.remove("last_sync_at");
+    let loaded: SyncSettings = serde_json::from_value(old.into()).unwrap();
+    assert!(loaded.auto_sync);
+    assert!(loaded.last_sync_at.is_none());
+    profile.settings.last_sync_at = Some(chrono::Utc::now().timestamp_millis());
+    let saved = serde_json::to_string(&profile.settings).unwrap();
+    let restored: SyncSettings = serde_json::from_str(&saved).unwrap();
+    assert_eq!(profile.settings, restored);
+    restored.validate(&profile.webdav).unwrap();
+    profile.settings.last_sync_at = Some(-1);
+    assert!(profile.settings.validate(&profile.webdav).is_err());
+    profile.settings.last_sync_at = Some(i64::MAX);
+    assert!(profile.settings.validate(&profile.webdav).is_err());
+}

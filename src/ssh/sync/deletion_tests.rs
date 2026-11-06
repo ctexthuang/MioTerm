@@ -46,9 +46,9 @@ fn an_explicitly_readded_host_is_allowed_but_sync_imports_never_clear_deletions(
     let archive = Archive::capture(&local).unwrap();
     let removed = local.remove(local.hosts[0].id).unwrap();
     let mut restored = archive.restore(local, &std::env::temp_dir()).unwrap();
-    assert_eq!(restored.deleted_hosts.len(), 1);
+    assert_eq!(restored.records.deleted.len(), 1);
     let added = restored.upsert(Host { id: 0, ..removed }).unwrap();
-    assert!(restored.deleted_hosts.is_empty());
+    assert_eq!(restored.records.deleted.len(), 1);
     restored = archive.restore(restored, &std::env::temp_dir()).unwrap();
     assert_eq!(restored.hosts, vec![added]);
 }
@@ -94,7 +94,7 @@ fn unavailable_keys_can_still_be_deleted_and_deleted_keys_are_not_reinstalled() 
 }
 
 #[test]
-fn normal_sync_retains_the_cloud_backup_without_restoring_deleted_hosts_or_passwords() {
+fn normal_sync_removes_deleted_hosts_and_passwords_from_the_current_cloud_archive() {
     let folder = tests::Folder::new();
     let mut local = password_host();
     let removed = local.hosts[0].clone();
@@ -123,7 +123,8 @@ fn normal_sync_retains_the_cloud_backup_without_restoring_deleted_hosts_or_passw
     assert_eq!(restored.connections.hosts, local.hosts);
     assert_eq!(restored.connections.deleted_hosts, local.deleted_hosts);
     assert!(destination.load(&removed).unwrap().is_none());
-    assert_eq!((uploaded.hosts.len(), uploaded.credentials.len()), (2, 2));
+    assert_eq!((uploaded.hosts.len(), uploaded.credentials.len()), (1, 1));
+    assert_eq!(uploaded.deleted.len(), 1);
     let json = serde_json::to_string(&restored.connections).unwrap();
     assert!(!json.contains("fixture password"));
     let restored_again = uploaded.restore(restored.connections, &folder.0).unwrap();
@@ -137,11 +138,14 @@ fn a_deletion_made_during_sync_cannot_be_overwritten_by_its_result() {
         before: local.hosts.clone(),
         before_next_id: local.next_id,
         before_deleted: local.deleted_hosts.clone(),
+        before_records: local.records.clone(),
+        gist_id: None,
         connections: local.clone(),
         hosts: 1,
         keys: 0,
         credentials: 0,
         warnings: Vec::new(),
+        secrets: None,
     };
     local.remove(local.hosts[0].id).unwrap();
     let deleted = local.clone();
@@ -162,7 +166,7 @@ fn old_connection_files_load_and_invalid_deletion_records_are_rejected() {
         .unwrap();
     local.remove(local.hosts[0].id).unwrap();
     let mut value = serde_json::to_value(&local).unwrap();
-    value["deleted_hosts"][0]["profile"] = serde_json::json!("not-a-digest");
+    value["records"]["deleted"][0] = serde_json::json!("not-a-digest");
     let invalid: Connections = serde_json::from_value(value).unwrap();
     assert!(invalid.validate().is_err());
 }

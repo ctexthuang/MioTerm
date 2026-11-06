@@ -12,92 +12,65 @@ use super::{
     keys::Key,
 };
 
-use sha2::{Digest as _, Sha256};
+mod host;
+mod merge;
+mod restore;
+mod secrets;
+pub(super) use host::PortableHost;
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Archive {
+    #[serde(default = "legacy_format")]
+    pub format: u32,
     pub hosts: BTreeSet<PortableHost>,
     pub keys: BTreeMap<String, Key>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub credentials: BTreeMap<String, Credential>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub deleted: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub exclusions: BTreeSet<crate::ssh::deleted::Deletion>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub snapshots: BTreeSet<String>,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct PortableHost {
-    name: String,
-    address: String,
-    port: u16,
-    user: String,
-    group: String,
-    key: Option<String>,
-    #[serde(default)]
-    auth: crate::ssh::Authentication,
+fn legacy_format() -> u32 {
+    1
 }
 
-impl PortableHost {
-    fn id(&self) -> String {
-        format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(self).expect("portable SSH host"))
-        )
-    }
-
-    fn capture(host: &Host) -> anyhow::Result<Self> {
-        let key = if host.identity.is_empty() {
-            None
-        } else {
-            Some(Key::capture(Path::new(&host.identity))?.id())
-        };
-        Ok(Self::new(host, key))
-    }
-    fn new(host: &Host, key: Option<String>) -> Self {
+impl Default for Archive {
+    fn default() -> Self {
         Self {
-            name: host.name.clone(),
-            address: host.address.clone(),
-            port: host.port,
-            user: host.user.clone(),
-            group: host.group.clone(),
-            key,
-            auth: host.auth,
+            format: 1,
+            hosts: BTreeSet::new(),
+            keys: BTreeMap::new(),
+            credentials: BTreeMap::new(),
+            deleted: BTreeSet::new(),
+            exclusions: BTreeSet::new(),
+            snapshots: BTreeSet::new(),
         }
     }
+}
 
-    fn host(&self, identity: String) -> Host {
-        Host {
-            id: 0,
-            name: self.name.clone(),
-            address: self.address.clone(),
-            port: self.port,
-            user: self.user.clone(),
-            group: self.group.clone(),
-            identity,
-            auth: self.auth,
-            remember_secret: false,
-            keepalive: Default::default(),
+pub(crate) fn legacy_id(host: &Host) -> anyhow::Result<String> {
+    let key = if host.identity.is_empty() {
+        None
+    } else {
+        match Key::capture(Path::new(&host.identity)) {
+            Ok(key) => Some(key.id()),
+            Err(error) => {
+                log::warn!(
+                    "SSH sync: legacy key unavailable for {:?}; preserving its local identity until repaired: {error:#}",
+                    host.label()
+                );
+                Some(format!("unavailable:{}", host.identity))
+            }
         }
-    }
-
-    fn same_fields(&self, host: &Host) -> bool {
-        (
-            &self.name,
-            &self.address,
-            self.port,
-            &self.user,
-            &self.group,
-            self.auth,
-        ) == (
-            &host.name,
-            &host.address,
-            host.port,
-            &host.user,
-            &host.group,
-            host.auth,
-        )
-    }
+    };
+    let mut portable = PortableHost::new(host, key);
+    portable.sync = Default::default();
+    Ok(portable.legacy_id())
 }
 
 impl Archive {
@@ -135,7 +108,12 @@ impl Archive {
 
     pub fn capture(local: &Connections) -> anyhow::Result<Self> {
         local.validate()?;
-        let mut archive = Self::default();
+        let mut archive = Self {
+            format: 2,
+            deleted: local.records.deleted.clone(),
+            exclusions: local.deleted_hosts.clone(),
+            ..Self::default()
+        };
         for host in &local.hosts {
             let key = if host.identity.is_empty() {
                 None
@@ -147,13 +125,19 @@ impl Archive {
                 archive.keys.insert(id.clone(), key);
                 Some(id)
             };
-            archive.hosts.insert(PortableHost::new(host, key));
+            let mut portable = PortableHost::new(host, key);
+            portable.identify();
+            archive.hosts.insert(portable);
         }
-        archive.validate()?;
+        archive.normalize()?;
         Ok(archive)
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            matches!(self.format, 1 | 2),
+            "SSH sync: unsupported archive format; update MioTerm"
+        );
         ensure!(
             self.hosts.len() <= 10000 && self.keys.len() <= 1000,
             "SSH sync: too many hosts or keys"
@@ -165,10 +149,13 @@ impl Archive {
         for snapshot in &self.snapshots {
             super::gitee::validate_id(snapshot)?;
         }
-        ensure!(
-            self.credentials.len() <= self.hosts.len(),
-            "SSH sync: too many credentials"
-        );
+        crate::ssh::records::State {
+            clock: 0,
+            deleted: self.deleted.clone(),
+        }
+        .validate()?;
+        crate::ssh::deleted::validate(&self.exclusions)?;
+        let mut ids = BTreeSet::new();
         let credential_hosts: BTreeMap<_, _> = self
             .hosts
             .iter()
@@ -193,6 +180,12 @@ impl Archive {
             );
         }
         for host in &self.hosts {
+            host.sync.validate()?;
+            ensure!(ids.insert(host.id()), "SSH sync: duplicate record identity");
+            ensure!(
+                self.format == 1 || !host.sync.is_empty(),
+                "SSH sync: record identity is missing"
+            );
             host.host(if host.key.is_some() {
                 if cfg!(windows) { r"C:\key" } else { "/key" }.into()
             } else {
@@ -209,159 +202,6 @@ impl Archive {
         Ok(())
     }
 
-    pub fn merge(&mut self, other: Self) -> anyhow::Result<()> {
-        other.validate()?;
-        for (id, credential) in other.credentials {
-            if let Some(existing) = self.credentials.get(&id) {
-                ensure!(
-                    existing == &credential,
-                    "SSH sync: credentials differ between devices; resolve them before synchronizing"
-                );
-            } else {
-                self.credentials.insert(id, credential);
-            }
-        }
-        self.snapshots.extend(other.snapshots);
-        self.hosts.extend(other.hosts);
-        for (id, key) in other.keys {
-            self.keys.entry(id).or_insert(key);
-        }
-        self.validate()
-    }
-
-    pub fn capture_credentials(
-        &mut self,
-        local: &Connections,
-        store: &impl Store,
-    ) -> anyhow::Result<Vec<String>> {
-        let mut warnings = Vec::new();
-        for host in &local.hosts {
-            if !self.hosts.iter().any(|portable| portable.same_fields(host)) {
-                continue;
-            }
-            if host.remember_secret && host.auth.has_secret() {
-                match store.load(host)? {
-                    Some(secret) => {
-                        self.credentials.insert(
-                            PortableHost::capture(host)?.id(),
-                            Credential(secret.to_string()),
-                        );
-                    }
-                    None if host.auth == crate::ssh::Authentication::Password => {
-                        let warning = format!(
-                            "No saved SSH password for {:?}; exporting connection details only.",
-                            host.label()
-                        );
-                        log::warn!("SSH sync: {warning}");
-                        warnings.push(warning);
-                    }
-                    None => {}
-                }
-            }
-        }
-        self.validate()?;
-        Ok(warnings)
-    }
-
-    pub fn restore_credentials(
-        &self,
-        local: &mut Connections,
-        store: &impl Store,
-    ) -> anyhow::Result<usize> {
-        let mut pending = Vec::new();
-        for host in &local.hosts {
-            if !self.hosts.iter().any(|portable| portable.same_fields(host)) {
-                continue;
-            }
-            if !host.identity.is_empty()
-                && !Path::new(&host.identity).try_exists().with_context(|| {
-                    format!("SSH sync: cannot inspect the key for {}", host.label())
-                })?
-            {
-                continue;
-            }
-            let portable = PortableHost::capture(host)?;
-            if local.is_deleted(host, portable.key.as_deref()) {
-                continue;
-            }
-            if let Some(credential) = self.credentials.get(&portable.id()) {
-                let existing = store.load(host)?;
-                ensure!(
-                    existing
-                        .as_deref()
-                        .map(|secret| secret.as_str())
-                        .is_none_or(|secret| secret == credential.0),
-                    "SSH sync: a local credential differs from the archive; it was not overwritten"
-                );
-                pending.push((host.id, credential, existing.is_none()));
-            }
-        }
-        for (id, credential, missing) in &pending {
-            let host = local
-                .hosts
-                .iter_mut()
-                .find(|host| host.id == *id)
-                .expect("restored SSH host");
-            host.remember_secret = true;
-            if *missing {
-                store.insert(host, &credential.0)?;
-            }
-        }
-        Ok(pending.len())
-    }
-
-    pub fn restore(&self, mut local: Connections, folder: &Path) -> anyhow::Result<Connections> {
-        self.validate()?;
-        let hosts = self.visible_hosts(&local);
-        let needed: BTreeSet<_> = hosts.iter().filter_map(|host| host.key.clone()).collect();
-        let mut installed = BTreeMap::new();
-        for (id, key) in self.keys.iter().filter(|(id, _)| needed.contains(*id)) {
-            installed.insert(id.clone(), key.install(folder)?);
-        }
-        let mut existing = BTreeMap::new();
-        for host in &local.hosts {
-            if !host.identity.is_empty() && Path::new(&host.identity).is_file() {
-                existing.insert(host.id, Key::capture(Path::new(&host.identity))?.id());
-            }
-        }
-        for portable in hosts {
-            let identity = portable
-                .key
-                .as_ref()
-                .map(|key| {
-                    installed
-                        .get(key)
-                        .cloned()
-                        .context("SSH sync: restored key is missing")
-                })
-                .transpose()?
-                .unwrap_or_default();
-            let same = local.hosts.iter_mut().find(|host| {
-                portable.same_fields(host)
-                    && match &portable.key {
-                        None => host.identity.is_empty(),
-                        Some(key) => {
-                            existing.get(&host.id) == Some(key)
-                                || (!host.identity.is_empty()
-                                    && !Path::new(&host.identity).exists())
-                        }
-                    }
-            });
-            if let Some(host) = same {
-                if !host.identity.is_empty() && !Path::new(&host.identity).exists() {
-                    host.identity = identity;
-                }
-            } else {
-                let host = local.merge_host(portable.host(identity))?;
-                if let Some(key) = &portable.key {
-                    existing.insert(host.id, key.clone());
-                }
-            }
-        }
-        local.validate()?;
-        Ok(local)
-    }
-
     pub fn visible_counts(&self, local: &Connections) -> (usize, usize) {
         let hosts = self.visible_hosts(local);
         let keys: BTreeSet<_> = hosts.iter().filter_map(|host| host.key.as_ref()).collect();
@@ -371,7 +211,11 @@ impl Archive {
     fn visible_hosts<'a>(&'a self, local: &Connections) -> Vec<&'a PortableHost> {
         self.hosts
             .iter()
-            .filter(|host| !local.is_deleted(&host.host(String::new()), host.key.as_deref()))
+            .filter(|host| {
+                !self.deleted.contains(&host.id())
+                    && !local.records.deleted.contains(&host.id())
+                    && !local.is_deleted(&host.host(String::new()), host.key.as_deref())
+            })
             .collect()
     }
 }

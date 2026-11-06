@@ -21,6 +21,18 @@ pub(super) fn upload(
     store: &impl Store,
     folder: &std::path::Path,
 ) -> (Restored, Archive) {
+    let current = local.clone();
+    let (mut restored, archive) = prepare_upload(local, cloud, store, folder);
+    restored.commit_secrets(&current, store).unwrap();
+    (restored, archive)
+}
+
+pub(super) fn prepare_upload(
+    local: Connections,
+    cloud: Option<Archive>,
+    store: &impl Store,
+    folder: &std::path::Path,
+) -> (Restored, Archive) {
     let passphrase = SecretString::from("635841".to_owned());
     let cloud = cloud.map(|archive| crypto::encrypt(&archive, &passphrase).unwrap());
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

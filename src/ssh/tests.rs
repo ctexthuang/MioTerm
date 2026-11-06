@@ -175,7 +175,7 @@ fn importing_a_saved_hosts_key_updates_only_its_matching_recent_connection() {
         .display()
         .to_string();
     imported.auth = Authentication::PrivateKey;
-    data.upsert(imported.clone()).unwrap();
+    let imported = data.upsert(imported).unwrap();
     assert_eq!(data.recent[1].host, imported);
     assert_eq!(data.recent[0].host.address, "other.example");
     assert!(data.recent[0].host.identity.is_empty());

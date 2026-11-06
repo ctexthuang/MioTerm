@@ -25,6 +25,10 @@ mod flow_tests;
 pub mod page;
 #[cfg(test)]
 mod partial_tests;
+#[cfg(test)]
+mod record_tests;
+#[cfg(test)]
+mod review_tests;
 mod saved;
 pub mod service;
 #[cfg(test)]
@@ -32,6 +36,8 @@ mod tests;
 #[cfg(test)]
 mod transport_tests;
 mod webdav;
+
+pub(super) use archive::legacy_id;
 
 pub(super) const LIMIT: usize = 8 * 1024 * 1024;
 
@@ -92,36 +98,60 @@ pub struct Restored {
     pub before: Vec<Host>,
     pub before_next_id: u64,
     pub(crate) before_deleted: std::collections::BTreeSet<super::deleted::Deletion>,
+    pub(crate) before_records: super::records::State,
+    pub gist_id: Option<String>,
     pub connections: Connections,
     pub hosts: usize,
     pub keys: usize,
     pub credentials: usize,
     pub warnings: Vec<String>,
+    secrets: Option<(Archive, Archive)>,
 }
 
 impl Restored {
-    pub fn apply(self, current: &mut Connections) -> anyhow::Result<()> {
-        ensure!(
-            current.hosts == self.before
-                && current.next_id == self.before_next_id
-                && current.deleted_hosts == self.before_deleted,
-            "SSH sync: local hosts changed during synchronization; retry to include those changes"
-        );
+    pub fn apply(mut self, current: &mut Connections) -> anyhow::Result<()> {
+        self.commit_secrets(current, &credentials::VaultStore)?;
         current.hosts = self.connections.hosts;
         current.next_id = self.connections.next_id;
         current.deleted_hosts = self.connections.deleted_hosts;
+        current.records = self.connections.records;
+        let deleted_ids: std::collections::BTreeSet<_> = self
+            .before
+            .iter()
+            .filter(|host| current.records.deleted.contains(&host.sync.id))
+            .map(|host| host.id)
+            .collect();
+        current.recent.retain(|recent| {
+            !current.records.deleted.contains(&recent.host.sync.id)
+                && !deleted_ids.contains(&recent.host.id)
+        });
         for recent in &mut current.recent {
-            if self
-                .before
-                .iter()
-                .any(|host| host.id == recent.host.id && host.same_target(&recent.host))
+            if let Some(previous) = self.before.iter().find(|host| host.id == recent.host.id)
                 && let Some(host) = current.hosts.iter().find(|host| host.id == recent.host.id)
             {
-                recent.host.identity = host.identity.clone();
-                recent.host.remember_secret = host.remember_secret;
+                host.update_recent(previous, &mut recent.host);
             }
         }
         current.validate()
+    }
+
+    fn commit_secrets(
+        &mut self,
+        current: &Connections,
+        store: &impl credentials::Store,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            current.hosts == self.before
+                && current.next_id == self.before_next_id
+                && current.deleted_hosts == self.before_deleted
+                && current.records == self.before_records,
+            "SSH sync: local hosts changed during synchronization; retry to include those changes"
+        );
+        if let Some((archive, before)) = &self.secrets {
+            archive.restore_secrets(&mut self.connections, store, Some(before))?;
+            self.secrets = None;
+        }
+        Ok(())
     }
 }
 
@@ -157,14 +187,9 @@ fn synchronize_with(
     store: &impl credentials::Store,
 ) -> anyhow::Result<Restored> {
     let mut warnings = Vec::new();
-    let local = if request.restore_only {
-        None
-    } else {
-        let (local, notices) =
-            Archive::capture_available(&request.local, store, request.include_credentials)?;
-        warnings.extend(notices);
-        Some(local)
-    };
+    let (local, notices) =
+        Archive::capture_available(&request.local, store, request.include_credentials)?;
+    warnings.extend(notices);
     let mut etag = None;
     let found = match &remote {
         Remote::WebDav(client) => client
@@ -183,8 +208,22 @@ fn synchronize_with(
         }
         None => Archive::default(),
     };
-    if let Some(local) = local {
-        archive.merge(local)?;
+    archive.normalize()?;
+    if !request.restore_only {
+        archive.merge(local.clone())?;
+    }
+    let (hosts, keys) = archive.visible_counts(&request.local);
+    let before = request.local.hosts.clone();
+    let before_next_id = request.local.next_id;
+    let before_deleted = request.local.deleted_hosts.clone();
+    let before_records = request.local.records.clone();
+    let connections = archive.restore(request.local, &request.key_folder)?;
+    let credentials = if request.include_credentials {
+        archive.check_secrets(&connections, store, &local)?
+    } else {
+        0
+    };
+    if !request.restore_only {
         let encrypted = crypto::encrypt(&archive, &request.passphrase)?;
         match &remote {
             Remote::WebDav(client) => client.put(&encrypted, etag.as_deref())?,
@@ -193,24 +232,20 @@ fn synchronize_with(
             }
         }
     }
-    let (hosts, keys) = archive.visible_counts(&request.local);
-    let before = request.local.hosts.clone();
-    let before_next_id = request.local.next_id;
-    let before_deleted = request.local.deleted_hosts.clone();
-    let mut connections = archive.restore(request.local, &request.key_folder)?;
-    let credentials = if request.include_credentials {
-        archive.restore_credentials(&mut connections, store)?
-    } else {
-        0
-    };
     Ok(Restored {
         before,
         before_next_id,
         before_deleted,
+        before_records,
+        gist_id: match &remote {
+            Remote::Gitee(client) => client.target_id(),
+            _ => None,
+        },
         connections,
         hosts,
         keys,
         credentials,
         warnings,
+        secrets: request.include_credentials.then_some((archive, local)),
     })
 }

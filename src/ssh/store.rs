@@ -54,10 +54,14 @@ pub(super) fn load(path: &Path) -> anyhow::Result<Connections> {
             return Err(error).with_context(|| format!("ssh: cannot read {}", path.display()));
         }
     };
-    let data: Connections = serde_json::from_str(&text)
+    let mut data: Connections = serde_json::from_str(&text)
         .with_context(|| format!("ssh: invalid connections at {}", path.display()))?;
     data.validate()
         .with_context(|| format!("ssh: invalid connections at {}", path.display()))?;
+    if data.migrate_records()? {
+        save(path, &data)?;
+        log::info!("SSH sync: migrated saved connection identities");
+    }
     log::info!(
         "ssh: loaded {} hosts, {} recent connections and {} local deletions from {}",
         data.hosts.len(),

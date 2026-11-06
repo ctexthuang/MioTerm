@@ -1927,7 +1927,7 @@ dependencies = [
 
 [[package]]
 name = "elyterminal"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "age",
  "alacritty_terminal",
@@ -1935,6 +1935,7 @@ dependencies = [
  "base64 0.22.1",
  "base64-simd",
  "block",
+ "chrono",
  "core-graphics 0.24.0",
  "dirs 7.0.0",
  "ely-gpui-component",

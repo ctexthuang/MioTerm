@@ -165,7 +165,7 @@ fn editing_keepalive_updates_recents_without_changing_credentials_or_deletions()
         ..host.clone()
     };
     assert_eq!(auth::account(&host), auth::account(&changed));
-    local.upsert(changed.clone()).unwrap();
+    let changed = local.upsert(changed).unwrap();
     assert_eq!(local.recent[0].host, changed);
     local.opened(host.clone(), 2);
     assert_eq!(local.recent.len(), 1);

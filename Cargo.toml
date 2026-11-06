@@ -1,6 +1,6 @@
 [package]
 name = "elyterminal"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -14,6 +14,7 @@ alacritty_terminal = { version = "=0.26.0", default-features = false }
 anyhow = "1"
 base64 = "0.22"
 base64-simd = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "7"
 ely-gpui-component = { git = "https://github.com/ELY-Open-Source/Ely-GPUI-Components.git", rev = "294a8323c08a06bd8e7782d16acee43b6bb0c5eb" }
 env_logger = "0.11"

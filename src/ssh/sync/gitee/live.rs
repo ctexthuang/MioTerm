@@ -60,8 +60,10 @@ struct Vault {
 
 impl Vault {
     fn upload(&mut self, archive: &Archive, passphrase: &SecretString) -> anyhow::Result<()> {
-        self.created
-            .push(self.client.put(&crypto::encrypt(archive, passphrase)?)?);
+        let id = self.client.put(&crypto::encrypt(archive, passphrase)?)?;
+        if !self.created.contains(&id) {
+            self.created.push(id);
+        }
         Ok(())
     }
 
@@ -94,13 +96,13 @@ impl Drop for Vault {
 }
 
 #[test]
-#[ignore = "uses the saved Gitee token; creates and removes private fixture snapshots"]
-fn saved_token_round_trips_private_keys_credentials_and_concurrent_snapshots() -> anyhow::Result<()>
-{
+#[ignore = "uses the saved Gitee token; creates, updates and removes one private test gist"]
+fn saved_token_round_trips_private_keys_credentials_and_fixed_gist() -> anyhow::Result<()> {
     let token = SecretString::from(credentials::token()?.to_string());
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let settings = Gitee {
         vault: format!("mt{:012x}", stamp & 0xffffffffffff),
+        ..Gitee::default()
     };
     let passphrase = SecretString::from("635841".to_string());
     let mut vault = Vault {
@@ -155,8 +157,13 @@ fn saved_token_round_trips_private_keys_credentials_and_concurrent_snapshots() -
         address: format!("branch-{}.invalid", settings.vault),
         ..Host::default()
     })?;
-    vault.upload(&Archive::capture(&branch)?, &passphrase)?;
-    eprintln!("Gitee live test: two independent private encrypted snapshots uploaded");
+    first.merge(Archive::capture(&branch)?)?;
+    vault.upload(&first, &passphrase)?;
+    ensure!(
+        vault.created.len() == 1,
+        "Gitee live test: update created another gist"
+    );
+    eprintln!("Gitee live test: fixed private encrypted gist created and updated");
     let merged = vault
         .client
         .pull(&passphrase)?
@@ -166,14 +173,14 @@ fn saved_token_round_trips_private_keys_credentials_and_concurrent_snapshots() -
         "Gitee live test: merged data counts differ"
     );
     ensure!(
-        merged.snapshots.len() == 2,
-        "Gitee live test: concurrent snapshot history differs"
+        merged.snapshots.is_empty(),
+        "Gitee live test: record archive still contains snapshot history"
     );
     vault.upload(&merged, &passphrase)?;
     fs::remove_file(&identity)?;
 
     let mut destination = AppCredentials::default();
-    let restored = synchronize_with(
+    let mut restored = synchronize_with(
         Request {
             settings: WebDav::default(),
             gitee: Some(settings.clone()),
@@ -188,6 +195,7 @@ fn saved_token_round_trips_private_keys_credentials_and_concurrent_snapshots() -
         Remote::Gitee(Client::new(&settings, &token)?),
         &destination,
     )?;
+    restored.commit_secrets(&Connections::default(), &destination)?;
     ensure!(
         restored.hosts == 3 && restored.keys == 1 && restored.credentials == 2,
         "Gitee live test: restored data counts differ"

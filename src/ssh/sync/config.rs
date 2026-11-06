@@ -13,18 +13,23 @@ pub enum Provider {
 #[serde(default, deny_unknown_fields)]
 pub struct Gitee {
     pub vault: String,
+    pub gist_id: String,
 }
 
 impl Default for Gitee {
     fn default() -> Self {
         Self {
             vault: "main".into(),
+            gist_id: String::new(),
         }
     }
 }
 
 impl Gitee {
     pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.gist_id.is_empty() {
+            super::gitee::validate_id(&self.gist_id)?;
+        }
         ensure!(
             !self.vault.is_empty()
                 && self.vault.len() <= 16
@@ -52,11 +57,18 @@ pub struct SyncSettings {
     pub remember_password: bool,
     pub remember_passphrase: bool,
     pub auto_sync: bool,
+    pub last_sync_at: Option<i64>,
 }
 
 impl SyncSettings {
     pub fn validate(&self, webdav: &super::WebDav) -> anyhow::Result<()> {
         self.gitee.validate()?;
+        ensure!(
+            self.last_sync_at.is_none_or(
+                |time| time >= 0 && chrono::DateTime::from_timestamp_millis(time).is_some()
+            ),
+            "SSH sync: invalid last successful synchronization time"
+        );
         if self.auto_sync {
             ensure!(
                 self.remember_passphrase,

@@ -163,6 +163,21 @@ pub(super) fn import(host: &Host, secret: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(super) fn replace_import(host: &Host, expected: &str, secret: &str) -> anyhow::Result<()> {
+    let _guard = CREDENTIAL_WRITES
+        .lock()
+        .map_err(|_| anyhow::anyhow!("ssh: credential writer is unavailable"))?;
+    ensure!(
+        !secret.is_empty() && secret.len() <= 1023 && !secret.contains(['\0', '\r', '\n']),
+        "SSH sync: invalid credential to restore"
+    );
+    Vault::open()?
+        .replace(&format!("ssh:{}", account(host)), expected, secret)
+        .context("SSH sync: cannot update the application credential vault")?;
+    log::info!("SSH sync: credential updated from a newer record");
+    Ok(())
+}
+
 fn environment(host: &Host) -> anyhow::Result<Vec<(String, String)>> {
     if !host.remember_secret {
         return Ok(Vec::new());

@@ -93,6 +93,7 @@ impl HostPanel {
         let quick = editor.quick;
         let original = editor.original.clone();
         let secret = zeroize::Zeroizing::new(editor.secret.read(cx).text().to_string());
+        let credential_changed = host.remember_secret && !secret.is_empty();
         let before = original.clone();
         let save = cx
             .background_executor()
@@ -102,11 +103,18 @@ impl HostPanel {
             let host = match this.update(cx, |_, cx| {
                 host.and_then(|host| {
                     if quick {
+                        if credential_changed {
+                            HostStore::update(cx, |data| data.credential_edited(&host))?;
+                        }
                         Ok((host, true))
                     } else {
-                        let host = HostStore::update(cx, |data| data.upsert(host))?;
+                        let host = HostStore::update(cx, |data| {
+                            if credential_changed {
+                                data.credential_edited(&host)?;
+                            }
+                            data.upsert(host)
+                        })?;
                         let shared = HostStore::get(cx).credential_in_use(&original);
-                        super::sync::service::changed(cx);
                         Ok((host, shared))
                     }
                 })
@@ -248,7 +256,6 @@ impl HostPanel {
         };
         let shared = HostStore::get(cx).credential_in_use(&host);
         self.deleting = None;
-        super::sync::service::changed(cx);
         let remove = cx.background_executor().spawn(async move {
             if host.remember_secret && !shared {
                 super::auth::forget(&host)?;

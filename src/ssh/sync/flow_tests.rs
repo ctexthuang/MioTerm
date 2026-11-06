@@ -213,7 +213,9 @@ fn restore_recovers_a_missing_local_password_without_uploading_an_incomplete_arc
         restore_only: true,
     };
     let client = webdav::Client::at(&url, "fixture", &request.password).unwrap();
-    let restored = synchronize_with(request, Remote::WebDav(client), &destination).unwrap();
+    let current = request.local.clone();
+    let mut restored = synchronize_with(request, Remote::WebDav(client), &destination).unwrap();
+    restored.commit_secrets(&current, &destination).unwrap();
     assert_eq!(restored.credentials, 1);
     assert!(restored.connections.hosts[0].remember_secret);
     assert_eq!(
@@ -225,4 +227,108 @@ fn restore_recovers_a_missing_local_password_without_uploading_an_incomplete_arc
         "fixture-ssh-password"
     );
     server.join().unwrap();
+}
+
+#[test]
+fn a_sync_pulls_remote_edits_and_deletions_before_uploading_the_combined_records() {
+    let folder = tests::Folder::new();
+    let mut local = Connections::default();
+    let edited = local.upsert(Host::default()).unwrap();
+    let deleted = local
+        .upsert(Host {
+            name: "Retired".into(),
+            ..Host::default()
+        })
+        .unwrap();
+    let mut remote = local.clone();
+    remote
+        .upsert(Host {
+            group: "Servers".into(),
+            ..edited
+        })
+        .unwrap();
+    remote.remove(deleted.id).unwrap();
+    let added = local
+        .upsert(Host {
+            name: "Local addition".into(),
+            ..Host::default()
+        })
+        .unwrap();
+    let cloud = Archive::capture(&remote).unwrap();
+    let store = credential_tests::MemoryStore::default();
+    let (restored, uploaded) = partial_tests::upload(local.clone(), Some(cloud), &store, &folder.0);
+    restored.apply(&mut local).unwrap();
+    let uploaded = uploaded
+        .restore(Connections::default(), &folder.0.join("peer"))
+        .unwrap();
+    for connections in [&local, &uploaded] {
+        assert_eq!(connections.hosts.len(), 2);
+        assert!(connections.hosts.iter().any(|host| host.group == "Servers"));
+        assert!(
+            connections
+                .hosts
+                .iter()
+                .any(|host| host.sync.id == added.sync.id)
+        );
+        assert!(
+            !connections
+                .hosts
+                .iter()
+                .any(|host| host.sync.id == deleted.sync.id)
+        );
+        assert!(connections.records.deleted.contains(&deleted.sync.id));
+    }
+}
+
+#[test]
+fn a_failed_pull_or_decryption_stops_synchronization_before_any_upload() {
+    for (response, expected) in [
+        (
+            "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "401",
+        ),
+        (
+            "HTTP/1.1 200 OK\r\nETag: \"one\"\r\nContent-Length: 7\r\nConnection: close\r\n\r\ninvalid",
+            "valid encrypted age archive",
+        ),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/archive", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                headers.push(byte[0]);
+                assert!(headers.len() < 65536);
+            }
+            assert!(headers.starts_with(b"GET "));
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let local = Connections::default();
+        let client = webdav::Client::at(&url, "fixture", &SecretString::default()).unwrap();
+        let error = synchronize_with(
+            Request {
+                settings: WebDav::default(),
+                gitee: None,
+                include_credentials: false,
+                remember_token: false,
+                password: SecretString::default(),
+                passphrase: SecretString::from("635841".to_owned()),
+                local,
+                key_folder: std::env::temp_dir(),
+                restore_only: false,
+            },
+            Remote::WebDav(client),
+            &credential_tests::MemoryStore::default(),
+        )
+        .err()
+        .unwrap();
+        assert!(format!("{error:#}").contains(expected), "{error:#}");
+        server.join().unwrap();
+    }
 }

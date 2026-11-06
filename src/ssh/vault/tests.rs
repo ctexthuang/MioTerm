@@ -32,6 +32,43 @@ impl Drop for Folder {
 }
 
 #[test]
+fn concurrent_compare_and_replace_accepts_only_the_expected_value() {
+    let folder = Folder::new();
+    let vault = Vault::at(folder.0.join("credentials"));
+    vault.put("ssh:fixture", "original").unwrap();
+    let results = std::thread::scope(|scope| {
+        let jobs: Vec<_> = ["left", "right"]
+            .into_iter()
+            .map(|value| {
+                let vault = &vault;
+                scope.spawn(move || vault.replace("ssh:fixture", "original", value).is_ok())
+            })
+            .collect();
+        jobs.into_iter()
+            .map(|job| job.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(results.iter().filter(|result| **result).count(), 1);
+    let current = vault.get("ssh:fixture").unwrap().unwrap();
+    assert!(matches!(current.as_str(), "left" | "right"));
+    let before = fs::read(vault.folder.join("credentials.age")).unwrap();
+    assert!(
+        vault
+            .replace("ssh:fixture", "original", "must not replace")
+            .is_err()
+    );
+    assert_eq!(
+        fs::read(vault.folder.join("credentials.age")).unwrap(),
+        before
+    );
+    assert!(
+        vault
+            .replace("missing", "original", "must not insert")
+            .is_err()
+    );
+}
+
+#[test]
 fn encrypted_file_survives_restart_without_plaintext_secrets_or_account_names() {
     let folder = Folder::new();
     let path = folder.0.join("credentials");

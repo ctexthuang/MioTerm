@@ -99,7 +99,10 @@ pub(super) fn validate(deleted: &BTreeSet<Deletion>) -> anyhow::Result<()> {
 
 impl Connections {
     pub(super) fn is_deleted(&self, host: &Host, key: Option<&str>) -> bool {
-        if self.deleted_hosts.is_empty() {
+        if self.records.deleted.contains(&host.sync.id) {
+            return true;
+        }
+        if self.deleted_hosts.is_empty() || host.sync.revision > 0 {
             return false;
         }
         let profile = profile(host);

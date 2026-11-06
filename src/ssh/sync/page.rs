@@ -108,12 +108,20 @@ impl SyncPage {
                 provider: self.provider,
                 gitee: Gitee {
                     vault: self.vault.read(cx).text().trim().into(),
+                    gist_id: if self.vault.read(cx).text().trim()
+                        == SettingsStore::get(cx).sync.gitee.vault
+                    {
+                        SettingsStore::get(cx).sync.gitee.gist_id.clone()
+                    } else {
+                        String::new()
+                    },
                 },
                 include_credentials: self.include_credentials,
                 remember_token: self.remember_token,
                 remember_password: self.remember_password,
                 remember_passphrase: self.remember_passphrase,
                 auto_sync: self.auto_sync,
+                last_sync_at: SettingsStore::get(cx).sync.last_sync_at,
             },
         }
     }

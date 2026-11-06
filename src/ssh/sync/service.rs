@@ -11,12 +11,14 @@ use super::{
 use crate::{
     settings::SettingsStore,
     ssh::{
-        Host, HostStore,
+        HostStore,
         vault::{Vault, migration},
     },
 };
 
+mod changes;
 mod queue;
+use changes::Changes;
 use queue::Queue;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -31,7 +33,7 @@ pub(super) struct SyncService {
     pub needs_import: bool,
     pub status: Option<(Severity, String)>,
     queue: Queue,
-    hosts: Vec<Host>,
+    changes: Changes,
     profile: Profile,
 }
 
@@ -50,27 +52,22 @@ pub fn start(cx: &mut App) {
         busy: false,
         needs_import: false,
         status: None,
-        queue: Queue::default(),
-        hosts: HostStore::get(cx).hosts.clone(),
+        queue: Queue::new(SettingsStore::get(cx).sync.auto_sync),
+        changes: Changes::from(HostStore::get(cx)),
         profile: profile(cx),
     });
     cx.observe_global::<HostStore>(|cx| {
-        let hosts = HostStore::get(cx).hosts.clone();
-        if cx.global::<SyncService>().hosts != hosts {
-            cx.global_mut::<SyncService>().hosts = hosts;
+        let data = HostStore::get(cx).clone();
+        if cx.global_mut::<SyncService>().changes.observe(&data) {
             changed(cx);
         }
     })
     .detach();
     cx.observe_global::<SettingsStore>(|cx| {
-        let now = profile(cx);
-        if cx.global::<SyncService>().profile != now {
-            cx.global_mut::<SyncService>().profile = now;
-            changed(cx);
-        }
+        configure(cx);
     })
     .detach();
-    changed(cx);
+    log::info!("SSH sync: worker started; waiting for manual sync or local changes");
     cx.spawn(async move |cx| {
         loop {
             cx.background_executor()
@@ -82,10 +79,10 @@ pub fn start(cx: &mut App) {
                     && service.profile.settings.auto_sync
                     && service.queue.ready(Instant::now())
                 {
-                    cx.global_mut::<SyncService>().queue.started();
                     let result = launch(profile(cx), Secrets::default(), Operation::Sync, true, cx);
                     if let Err(error) = result {
-                        finish(Err(error), true, cx);
+                        cx.global_mut::<SyncService>().queue.started();
+                        finish(Err(error), cx);
                     }
                 }
             });
@@ -95,9 +92,30 @@ pub fn start(cx: &mut App) {
 }
 
 pub(crate) fn changed(cx: &mut App) {
-    if cx.try_global::<SyncService>().is_some() && SettingsStore::get(cx).sync.auto_sync {
-        cx.global_mut::<SyncService>().queue.changed(Instant::now());
-        log::info!("SSH sync: local changes queued for automatic synchronization");
+    if cx.try_global::<SyncService>().is_none() {
+        return;
+    }
+    configure(cx);
+    match cx.global_mut::<SyncService>().queue.changed(Instant::now()) {
+        Ok(Some(delay)) => log::info!(
+            "SSH sync: local changes queued; synchronization in {} seconds",
+            delay.as_secs()
+        ),
+        Ok(None) => {}
+        Err(error) => {
+            log::error!("SSH sync: cannot schedule automatic synchronization: {error:#}");
+            cx.global_mut::<SyncService>().status = Some((Severity::Danger, format!("{error:#}")));
+        }
+    }
+}
+
+fn configure(cx: &mut App) {
+    let now = profile(cx);
+    let service = cx.global_mut::<SyncService>();
+    if service.profile != now {
+        service.queue.configure(now.settings.auto_sync);
+        service.profile = now;
+        log::info!("SSH sync: configuration changed; pending automatic synchronization canceled");
     }
 }
 
@@ -124,7 +142,6 @@ pub(super) fn import_native(cx: &mut App) -> anyhow::Result<()> {
     let token = SettingsStore::get(cx).sync.remember_token;
     let service = cx.global_mut::<SyncService>();
     service.busy = true;
-    service.queue.started();
     service.status = Some((
         Severity::Info,
         "Importing system credentials into the application vault...".into(),
@@ -139,10 +156,10 @@ pub(super) fn import_native(cx: &mut App) -> anyhow::Result<()> {
             Ok(report) => {
                 let complete = report.missing.is_empty();
                 let text = report.message();
-                if complete {
+                if report.imported > 0 {
                     changed(cx);
                 }
-                finish(Ok((Severity::Success, text.clone())), false, cx);
+                finish(Ok((Severity::Success, text.clone())), cx);
                 if !complete {
                     let service = cx.global_mut::<SyncService>();
                     service.needs_import = true;
@@ -150,7 +167,7 @@ pub(super) fn import_native(cx: &mut App) -> anyhow::Result<()> {
                 }
             }
             Err(error) => {
-                finish(Err(error), false, cx);
+                finish(Err(error), cx);
                 cx.global_mut::<SyncService>().needs_import = true;
             }
         });
@@ -175,7 +192,7 @@ fn launch(
     let previous = profile(cx);
     let service = cx.global_mut::<SyncService>();
     service.busy = true;
-    if operation == Operation::Sync {
+    if operation != Operation::Save {
         service.queue.started();
     }
     service.status = Some((
@@ -212,10 +229,7 @@ fn launch(
                     saved.webdav = next.webdav.clone();
                     saved.sync = next.settings.clone();
                 })?;
-                cx.global_mut::<SyncService>().profile = next.clone();
-                if operation == Operation::Save {
-                    changed(cx);
-                }
+                configure(cx);
             }
             if operation == Operation::Save {
                 return Ok(None);
@@ -250,7 +264,7 @@ fn launch(
                 );
                 apply(restored, automatic, cx)
             });
-            finish(result, automatic, cx);
+            finish(result, cx);
         });
     })
     .detach();
@@ -267,15 +281,23 @@ fn apply(
     };
     let (hosts, keys, credentials) = (restored.hosts, restored.keys, restored.credentials);
     let warnings = restored.warnings.clone();
+    let gist_id = restored.gist_id.clone();
     HostStore::update(cx, |local| restored.apply(local))?;
-    cx.global_mut::<SyncService>().hosts = HostStore::get(cx).hosts.clone();
+    cx.global_mut::<SyncService>().changes = Changes::from(HostStore::get(cx));
+    SettingsStore::update(cx, |saved| {
+        if let Some(id) = gist_id {
+            saved.sync.gitee.gist_id = id;
+        }
+        saved.sync.last_sync_at = Some(chrono::Utc::now().timestamp_millis());
+    })?;
+    cx.global_mut::<SyncService>().profile = profile(cx);
     let prefix = if automatic {
         "Automatic sync complete. "
     } else {
         ""
     };
     let mut message = format!(
-        "{prefix}Merged {hosts} hosts, {keys} private keys and {credentials} credentials. Locally deleted hosts stay hidden; cloud history is retained."
+        "{prefix}Synchronized {hosts} hosts, {keys} private keys and {credentials} credentials. Connection edits and deletions are synchronized across devices."
     );
     let severity = if warnings.is_empty() {
         Severity::Success
@@ -287,13 +309,10 @@ fn apply(
     Ok((severity, message))
 }
 
-fn finish(result: anyhow::Result<(Severity, String)>, automatic: bool, cx: &mut App) {
+fn finish(result: anyhow::Result<(Severity, String)>, cx: &mut App) {
     let service = cx.global_mut::<SyncService>();
     service.busy = false;
     service.needs_import = false;
-    if automatic {
-        service.queue.finished(result.is_ok(), Instant::now());
-    }
     service.status = Some(match result {
         Ok((severity, message)) => {
             log::info!("SSH sync: {message}");

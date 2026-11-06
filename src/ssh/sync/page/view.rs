@@ -9,7 +9,7 @@ use ely_gpui_component::{
 use gpui::{Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div};
 
 use super::{Operation, Provider, SyncPage, SyncService};
-use crate::ssh::HostStore;
+use crate::{settings::SettingsStore, ssh::HostStore};
 
 impl Render for SyncPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -153,6 +153,41 @@ impl Render for SyncPage {
         let data = HostStore::get(cx);
         let import = cx.entity();
         let auto = cx.entity();
+        let policy = SegmentedControl::new(
+            "ssh-sync-policy",
+            if self.auto_sync {
+                "on-change"
+            } else {
+                "manual"
+            },
+        )
+        .segment("manual", "Manual", None)
+        .segment("on-change", "On change", None)
+        .size(ControlSize::Sm)
+        .on_change(move |key, _, cx| {
+            auto.update(cx, |page, cx| {
+                if cx.global::<SyncService>().busy {
+                    return;
+                }
+                page.auto_sync = key.as_ref() == "on-change";
+                if page.auto_sync {
+                    page.remember_passphrase = true;
+                    page.remember_token |= page.provider == Provider::Gitee;
+                    page.remember_password |= page.provider == Provider::WebDav;
+                }
+                cx.notify();
+            })
+        });
+        let last_sync = SettingsStore::get(cx)
+            .sync
+            .last_sync_at
+            .and_then(chrono::DateTime::from_timestamp_millis)
+            .map(|time| {
+                time.with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M:%S %:z")
+                    .to_string()
+            })
+            .unwrap_or_else(|| "Never".into());
         let contents = SettingsSection::new("SSH archive")
             .row(SettingsRow::new("Saved hosts").description(data.hosts.len().to_string()))
             .row(
@@ -199,23 +234,9 @@ impl Render for SyncPage {
             .child(server)
             .child(encryption)
             .child(
-                SettingsSection::new("Automatic sync").row(
-                    SettingsRow::new("Sync after local changes").control(
-                        Switch::new("auto-ssh-sync", self.auto_sync)
-                            .disabled(busy)
-                            .on_change(move |value, _, cx| {
-                                auto.update(cx, |page, cx| {
-                                    page.auto_sync = value;
-                                    if value {
-                                        page.remember_passphrase = true;
-                                        page.remember_token |= page.provider == Provider::Gitee;
-                                        page.remember_password |= page.provider == Provider::WebDav;
-                                    }
-                                    cx.notify();
-                                })
-                            }),
-                    ),
-                ),
+                SettingsSection::new("Synchronization")
+                    .row(SettingsRow::new("Sync policy").control(policy))
+                    .row(SettingsRow::new("Last successful sync").description(last_sync)),
             )
             .child(contents)
             .children(

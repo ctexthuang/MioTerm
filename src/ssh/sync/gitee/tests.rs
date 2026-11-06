@@ -87,7 +87,7 @@ fn server(
 }
 
 fn snippet(id: &str, encrypted: &[u8]) -> Value {
-    json!({"id": id, "description": "MioTerm Sync main", "public": false, "created_at": "2026-01-01T00:00:00Z",
+    json!({"id": id, "description": "MioTerm Sync main records", "public": false, "created_at": "2026-01-01T00:00:00Z",
         "files": {FILE: {"content": STANDARD.encode(encrypted), "truncated": false}}})
 }
 
@@ -98,7 +98,7 @@ fn phrase() -> SecretString {
 #[test]
 fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls() {
     let mut snapshot = Value::Null;
-    let (client, task) = server(6, move |step, request| match step {
+    let (client, task) = server(7, move |step, request| match step {
         0 => (200, json!([])),
         1 => {
             assert!(request.headers.starts_with("POST /gists "));
@@ -108,8 +108,8 @@ fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls(
             snapshot["id"] = json!("saved");
             (201, snapshot.clone())
         }
-        2 | 4 => (200, json!([snapshot.clone()])),
-        3 | 5 => (200, snapshot.clone()),
+        3 | 5 => (200, json!([snapshot.clone()])),
+        2 | 4 | 6 => (200, snapshot.clone()),
         _ => unreachable!(),
     });
     let base = client.base.clone();
@@ -169,12 +169,15 @@ fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls(
     )
     .unwrap();
     let target = MemoryStore::default();
-    let restored = synchronize_with(
+    let mut restored = synchronize_with(
         request(Connections::default(), true),
         Remote::Gitee(client),
         &target,
     )
     .unwrap();
+    restored
+        .commit_secrets(&Connections::default(), &target)
+        .unwrap();
     assert_eq!(restored.hosts, 3);
     assert_eq!(restored.credentials, 2);
     assert_eq!(restored.keys, 1);
@@ -234,7 +237,7 @@ fn gitee_transfers_encrypted_hosts_and_passwords_without_storing_tokens_in_urls(
 }
 
 #[test]
-fn concurrent_snapshots_are_merged_and_authenticated_history_skips_covered_snapshots() {
+fn legacy_snapshots_are_migrated_once_and_the_record_vault_takes_precedence() {
     let mut left = Connections::default();
     left.upsert(Host {
         address: "left.example".into(),
@@ -248,14 +251,23 @@ fn concurrent_snapshots_are_merged_and_authenticated_history_skips_covered_snaps
             ..Host::default()
         })
         .unwrap();
-    let one = snippet(
+    let mut one = snippet(
         "one",
         &crypto::encrypt(&Archive::capture(&left).unwrap(), &phrase()).unwrap(),
     );
-    let two = snippet(
+    let mut two = snippet(
         "two",
         &crypto::encrypt(&Archive::capture(&right).unwrap(), &phrase()).unwrap(),
     );
+    for value in [&mut one, &mut two] {
+        value["description"] = json!("MioTerm Sync main");
+        let file = value["files"]
+            .as_object_mut()
+            .unwrap()
+            .remove(FILE)
+            .unwrap();
+        value["files"][LEGACY_FILE] = file;
+    }
     let (client, task) = server(3, move |step, request| match step {
         0 => (200, json!([one.clone(), two.clone()])),
         _ if request.headers.starts_with("GET /gists/one ") => (200, one.clone()),
@@ -263,16 +275,14 @@ fn concurrent_snapshots_are_merged_and_authenticated_history_skips_covered_snaps
     });
     let merged = client.pull(&phrase()).unwrap().unwrap();
     assert_eq!(merged.hosts.len(), 2);
-    assert_eq!(merged.snapshots.len(), 2);
+    assert!(merged.snapshots.is_empty());
     task.join().unwrap();
     let mut newest = snippet("zzz", &crypto::encrypt(&merged, &phrase()).unwrap());
     newest["created_at"] = json!("2026-02-01T00:00:00Z");
     let (client, task) = server(2, move |step, _| {
         if step == 0 {
-            let mut old = newest.clone();
-            old["id"] = json!("one");
-            let mut other = newest.clone();
-            other["id"] = json!("two");
+            let old = json!({"id":"one", "description":"MioTerm Sync main", "public":false});
+            let other = json!({"id":"two", "description":"MioTerm Sync main", "public":false});
             (200, json!([old, newest.clone(), other]))
         } else {
             (200, newest.clone())
@@ -360,4 +370,110 @@ fn pagination_and_http_errors_never_result_in_partial_or_unprotected_uploads() {
     assert!(client.put(b"encrypted fixture").is_err());
     assert!(client.put(&vec![0; SNAPSHOT_LIMIT + 1]).is_err());
     assert_eq!(task.join().unwrap().len(), 1);
+}
+
+#[test]
+fn repeated_sync_updates_one_private_gist_and_checks_before_and_after_patch() {
+    let mut saved = Value::Null;
+    let (client, task) = server(8, move |step, request| match step {
+        0 => (200, json!([])),
+        1 | 6 => {
+            assert!(request.headers.starts_with(if step == 1 {
+                "POST /gists "
+            } else {
+                "PATCH /gists/fixed "
+            }));
+            saved = serde_json::from_slice(&request.body).unwrap();
+            saved["id"] = json!("fixed");
+            assert_eq!(saved["public"], false);
+            assert_eq!(saved["description"], "MioTerm Sync main records");
+            (if step == 1 { 201 } else { 200 }, saved.clone())
+        }
+        3 => (200, json!([saved.clone()])),
+        _ => {
+            assert!(request.headers.starts_with("GET /gists/fixed "));
+            (200, saved.clone())
+        }
+    });
+    assert!(client.pull(&phrase()).unwrap().is_none());
+    let mut local = password_host();
+    let first = crypto::encrypt(&Archive::capture(&local).unwrap(), &phrase()).unwrap();
+    assert_eq!(client.put(&first).unwrap(), "fixed");
+    client.pull(&phrase()).unwrap().unwrap();
+    local
+        .upsert(Host {
+            group: "production".into(),
+            ..local.hosts[0].clone()
+        })
+        .unwrap();
+    let next = crypto::encrypt(&Archive::capture(&local).unwrap(), &phrase()).unwrap();
+    assert_eq!(client.put(&next).unwrap(), "fixed");
+    assert_eq!(client.target_id().as_deref(), Some("fixed"));
+    let requests = task.join().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.headers.starts_with("POST "))
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.headers.starts_with("PATCH "))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_remote_change_after_pull_aborts_before_patch() {
+    let one = snippet(
+        "fixed",
+        &crypto::encrypt(&Archive::capture(&password_host()).unwrap(), &phrase()).unwrap(),
+    );
+    let changed = snippet(
+        "fixed",
+        &crypto::encrypt(&Archive::default(), &phrase()).unwrap(),
+    );
+    let (client, task) = server(3, move |step, request| {
+        assert!(request.headers.starts_with("GET "));
+        match step {
+            0 => (200, json!([one.clone()])),
+            1 => (200, one.clone()),
+            _ => (200, changed.clone()),
+        }
+    });
+    client.pull(&phrase()).unwrap().unwrap();
+    let bytes = crypto::encrypt(&Archive::default(), &phrase()).unwrap();
+    assert!(
+        client
+            .put(&bytes)
+            .unwrap_err()
+            .to_string()
+            .contains("another device")
+    );
+    task.join().unwrap();
+}
+
+#[test]
+fn multiple_record_targets_are_not_silently_overwritten() {
+    let (client, task) = server(1, |_, _| {
+        (
+            200,
+            json!([
+                {"id":"one", "public":false, "description":"MioTerm Sync main records"},
+                {"id":"two", "public":false, "description":"MioTerm Sync main records"}
+            ]),
+        )
+    });
+    assert!(
+        client
+            .pull(&phrase())
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("multiple record vaults")
+    );
+    task.join().unwrap();
 }

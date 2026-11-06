@@ -98,6 +98,7 @@ impl Editor {
             auth: self.auth,
             remember_secret: self.remember && self.auth.has_secret(),
             keepalive: self.keepalive,
+            sync: self.original.sync.clone(),
         };
         host.validate()?;
         Ok(host)

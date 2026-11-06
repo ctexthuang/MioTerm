@@ -28,6 +28,13 @@ impl Store for MemoryStore {
             .insert(auth::account(host), secret.into());
         Ok(())
     }
+    fn replace(&self, host: &Host, expected: &str, secret: &str) -> anyhow::Result<()> {
+        let mut saved = self.0.borrow_mut();
+        let entry = saved.get_mut(&auth::account(host)).unwrap();
+        anyhow::ensure!(entry == expected, "fixture: credential changed during sync");
+        *entry = secret.into();
+        Ok(())
+    }
 }
 
 pub(super) fn password_host() -> Connections {
@@ -74,7 +81,8 @@ fn settings_keep_webdav_and_never_serialize_tokens_or_encryption_passwords() {
     ] {
         assert!(
             Gitee {
-                vault: vault.into()
+                vault: vault.into(),
+                ..Gitee::default()
             }
             .validate()
             .is_err()
@@ -85,7 +93,8 @@ fn settings_keep_webdav_and_never_serialize_tokens_or_encryption_passwords() {
     }
     assert!(
         Gitee {
-            vault: "work-vault_2".into()
+            vault: "work-vault_2".into(),
+            ..Gitee::default()
         }
         .validate()
         .is_ok()
@@ -340,11 +349,14 @@ fn restoring_credentials_updates_matching_recent_connections_without_syncing_his
         before: local.hosts.clone(),
         before_next_id: local.next_id,
         before_deleted: local.deleted_hosts.clone(),
+        before_records: local.records.clone(),
+        gist_id: None,
         connections: imported,
         hosts: 1,
         keys: 0,
         credentials: 1,
         warnings: Vec::new(),
+        secrets: None,
     };
     restored.apply(&mut local).unwrap();
     assert_eq!(local.recent.len(), 1);
