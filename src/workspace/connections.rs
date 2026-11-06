@@ -3,9 +3,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use ely_gpui_component::{
     buttons::{ButtonVariant, IconButton},
     feedback::Alert,
-    lists::List,
     menus::{Menu, MenuItem, OverflowMenu},
-    motion::Reorder,
     primitives::{IconName, Severity},
     shell::ShellColumn,
     theme::ControlSize,
@@ -17,7 +15,6 @@ use gpui::{
 
 use super::{Workspace, panel::tab_button, widths::Side};
 use crate::{
-    sessions,
     settings::SettingsStore,
     ssh::{Host, HostStore, control::Control},
     term::{config, spawn},
@@ -166,43 +163,7 @@ impl Workspace {
                 })
             })
         });
-        let home = dirs::home_dir();
-        let workspace = cx.entity();
-        let rows = self
-            .sessions
-            .iter()
-            .enumerate()
-            .map(|(index, session)| {
-                let row = sessions::row(
-                    &workspace,
-                    index,
-                    session,
-                    index == self.active,
-                    home.as_deref(),
-                    now,
-                    cx,
-                );
-                (
-                    session.terminal.entity_id().as_u64().to_string(),
-                    row.into_any_element(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let list = if SettingsStore::get(cx).drag_sessions {
-            let dragged = workspace.clone();
-            rows.into_iter()
-                .fold(
-                    Reorder::new("session-rows").on_reorder(move |from, to, _, cx| {
-                        dragged.update(cx, |this, cx| this.reorder(from, to, cx))
-                    }),
-                    |list, (key, row)| list.row(key, div().pb_0p5().child(row)),
-                )
-                .into_any_element()
-        } else {
-            List::new()
-                .children(rows.into_iter().map(|(_, row)| row))
-                .into_any_element()
-        };
+        let list = self.session_list(SettingsStore::get(cx).drag_sessions, now, cx);
         let error = self.ssh_error.as_ref().map(|error| {
             let dismiss = cx.entity();
             Alert::new("ssh-spawn-error", Severity::Danger, "SSH could not start")

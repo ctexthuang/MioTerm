@@ -2,12 +2,29 @@
 
 ## Baseline
 
-- MioTerm base: `eb3617f` (`v0.0.9`).
-- Previously included upstream: `6936b6f3edb5f55891dd62898290994f52e24dc0` (0.2.0).
-- Integrated upstream: `ba664ef6ef0cdfcb35dc6b65d538cc58e7ecd313` (0.2.2, fetched 2026-11-04).
+- MioTerm base: `ef22283` (`v0.1.0`).
+- Previously included upstream: `ba664ef6ef0cdfcb35dc6b65d538cc58e7ecd313` (0.2.2).
+- Integrated upstream: `fdca49aca4400467ed08bd8d873f82348de797a3` (0.2.3, fetched 2026-11-06).
 - Upstream repository: https://github.com/ELY-Open-Source/ELYTerminal.
 - MioTerm keeps its own version, release tags and update endpoint.
-- MioTerm `v0.1.0` includes this integration; `v0.0.9` uses upstream 0.2.0.
+- MioTerm `v0.1.0` uses upstream 0.2.2; the 0.2.3 integration is not released yet.
+
+## New Since Upstream 0.2.2
+
+- Background opacity now accepts 0 to 100 percent.
+- Background images can fill the terminal or the window below its title bar.
+- Image size, position and repetition accept CSS-like settings.
+- Links gain hover underlines, with bounded scanning for plain URLs.
+- Optional right-click copy/paste, enabled by default only on Windows.
+- Windows mouse wheel reports count notches rather than configured scroll lines.
+- Windows image-only clipboard pastes notify bracketed-paste applications.
+- Windows keeps the pointer hidden while typing until it actually moves.
+- Underline and box-drawing rule thickness rounds up to device pixels.
+- Windows ARM64 testing and packaging join MioTerm's existing tag-only workflow.
+
+GPUI remains pinned to 0.3.8, Ely to `294a832`. The Windows platform patch
+advances to `0b74ab7`; no toolchain or MioTerm version change is required.
+The shared session-row helper retains MioTerm's entity-based drag identities.
 
 ## New Since Upstream 0.2.0
 
@@ -101,7 +118,40 @@ Tests use generated keys, isolated app folders and local mock sync servers.
 Live Gitee tests remain opt-in and must not upload real user configuration.
 Platform-specific runtime behavior requires the corresponding operating system.
 
-### Current 0.2.2 Integration Checks
+### Current 0.2.3 Integration Checks
+
+On macOS with Rust 1.95.0 and runtime shaders:
+
+- Core regression: 617 passed, one opt-in Gitee test ignored, four shell tests filtered.
+- Isolated fonts, application vault, actual askpass and generated RSA PEM tests pass.
+- All-target Clippy with warnings denied, formatting and the 500-line rule pass.
+- Release binary and native screenshot harness build successfully.
+- Native screenshots confirm closed startup sidebars and the desktop character.
+- Terminal-only positioning and full-window horizontal image repetition render correctly.
+- Host, Git and monitoring panels retain Mocha's pink accents with a background image.
+- Native right-click events copy five selected fixture characters and paste five characters.
+- Appearance exposes all picture controls; Settings retains the Sync page.
+- Release YAML, version-tag-only trigger and ARM64 publication dependencies are checked.
+
+Link detection and hover cell tests pass; the inactive screenshot harness did not
+confirm the hover underline visually. No live Gitee or loopback SSH tests ran in
+this integration. Two opt-in loopback tests remain ignored. Four shell tests
+require fish, PowerShell or platform-specific environments absent on this host.
+Windows and Linux native runtime/package checks remain outstanding.
+All credentials and configuration used in tests are generated fixtures.
+
+### Manual Checks for This Update
+
+1. Start MioTerm and confirm both sidebars stay closed until clicked.
+2. In Settings > Appearance > Window, select an image and switch Picture scope.
+3. Try `contain`, `300px auto`, `right bottom` and horizontal repetition; toggle sidebars.
+4. Move Background opacity to 0%, then restore the preferred opacity.
+5. Print `https://example.com/path` in the terminal and hover the URL.
+6. Enable Settings > Terminal > Right click pastes; select text and right-click twice.
+7. Open Settings > Sync and confirm the existing Gitee/WebDAV options remain available.
+8. Connect a test SSH host and check Files, Git and monitoring follow its directory.
+
+### Previous 0.2.2 Integration Checks
 
 On macOS with Rust 1.95.0 and runtime shaders:
 

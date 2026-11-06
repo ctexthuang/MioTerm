@@ -91,6 +91,40 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+  windows-arm:
+    name: Check and package Windows ARM64
+    needs: validate
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Warm up Windows PowerShell
+        shell: pwsh
+        run: |
+          $powershell = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+          & $powershell -NoProfile -NonInteractive -Command "Write-Output 'PowerShell warm-up complete'"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows PowerShell warm-up failed with exit code $LASTEXITCODE"
+          }
+      - run: cargo test --locked --quiet
+      - run: cargo build --locked
+      - name: Package Windows ARM64 without a publisher signature
+        shell: pwsh
+        run: ./scripts/windows-zip.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MioTerm-windows-aarch64
+          path: target/release/MioTerm-*-windows-aarch64.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   linux:
     name: Check Linux
     needs: validate
@@ -141,7 +175,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [macos, windows, package-linux]
+    needs: [macos, windows, windows-arm, package-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

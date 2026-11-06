@@ -5,7 +5,7 @@ use ely_gpui_component::{
     i18n::text,
     primitives::{FocusScope, IconName},
     shell::{ColumnShell, ResizeBorder, ShellColumn},
-    theme::ControlSize,
+    theme::{ActiveTheme, ControlSize},
 };
 use gpui::{
     Action, App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement,
@@ -34,6 +34,7 @@ mod rename;
 mod reorder;
 mod session;
 mod toggles;
+mod wallpaper;
 mod widths;
 
 use toggles::column_toggle;
@@ -350,7 +351,8 @@ impl Render for Workspace {
         self.background.fit(window);
         let now = Instant::now();
         self.tick(now, cx);
-        let settings = SettingsStore::get(cx);
+        let settings = SettingsStore::get(cx).clone();
+        let base = cx.theme().colors.bg;
         let workspace = cx.entity();
         // It leads the first column or ends the last.
         let left = column_toggle(
@@ -395,7 +397,13 @@ impl Render for Workspace {
             .map(|session| session.terminal.clone());
         let mut terminal = ShellColumn::new("terminal")
             .title(self.title().to_string())
-            .children(shown);
+            .child(
+                div()
+                    .relative()
+                    .size_full()
+                    .children(shown)
+                    .child(wallpaper::ruler()),
+            );
         if settings.show_sessions {
             shell = shell.column(self.connection_sidebar(left, now, cx));
         } else {
@@ -443,7 +451,15 @@ impl Render for Workspace {
             .child(
                 ResizeBorder::new()
                     .when(self.background.see_through(), ResizeBorder::glass)
-                    .child(FocusScope::new(&self.focus).root().size_full().child(shell)),
+                    .child(
+                        FocusScope::new(&self.focus).root().size_full().child(
+                            div()
+                                .relative()
+                                .size_full()
+                                .children(wallpaper::paint(&settings, base, window, cx))
+                                .child(shell),
+                        ),
+                    ),
             )
             .children(self.remote_folder_dialog(cx))
     }
