@@ -14,13 +14,13 @@
 - 本修改版主要扩展 SSH、SFTP、远程 Git、系统监控、WebDAV 同步及相关交互，不将这些新增功能归为上游已发布功能。
 - 原项目的版权声明、MIT 许可证和第三方许可文件予以保留。感谢原作者和所有上游贡献者。
 
-当前 `Cargo.toml` 的版本号为 `0.1.0`，修改版仍在开发中。安装包通过本仓库的 Releases 发布，最新版本标记为 Latest；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
+当前 `Cargo.toml` 的版本号为 `0.1.1`。安装包通过本仓库的 Releases 发布，最新版本标记为 Latest；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
 
 `v0.0.9` 已合并 ELYTerminal 0.2.0 的上游提交 [`6936b6f`](https://github.com/ELY-Open-Source/ELYTerminal/commit/6936b6f3edb5f55891dd62898290994f52e24dc0)，并修复 SSH 部分凭据缺失时的同步和本机删除记录被恢复的问题。集成范围见 [上游同步记录](docs/upstream-integration.md)，测试步骤见 [测试指南](docs/testing.md)。
 
 `v0.1.0` 进一步合并至 ELYTerminal 0.2.2 的 [`ba664ef`](https://github.com/ELY-Open-Source/ELYTerminal/commit/ba664ef)，增加远程 Files/Git 每秒刷新、远程目录选择新建会话与可配置 SSH 保活。
 
-当前开发代码已融合 ELYTerminal 0.2.3 的 [`fdca49a`](https://github.com/ELY-Open-Source/ELYTerminal/commit/fdca49a)，包含背景图布局、链接悬停下划线、右键复制／粘贴及 Windows 输入修复；尚未发布新的 MioTerm 版本。
+`v0.1.1` 融合 ELYTerminal 0.2.3 的 [`fdca49a`](https://github.com/ELY-Open-Source/ELYTerminal/commit/fdca49a)，包含背景图布局、链接悬停下划线、右键复制／粘贴及 Windows 输入修复，并修复极端背景图尺寸或位置设置导致的计算溢出。SSH、SFTP、远程 Git 和托管 RSA PEM 私钥已通过实际连接测试。
 
 ## 当前功能
 
@@ -273,11 +273,11 @@ git merge upstream/main
 
 工作流使用 GitHub 托管的 macOS、Windows 和 Ubuntu runner，不需要原作者的自托管机器；macOS 会安装 shell 测试需要的 fish，Linux 保留原有的容器测试环境。同一次运行中包含三端任务，全部检查和打包成功后，使用已推送的 tag 创建普通 Release 并标记为 Latest，附上 macOS arm64、Windows x86_64、Linux x86_64 安装包与 SHA-256 校验文件；不使用原作者的签名身份或私钥，也不会覆盖上游的旧版本标签。
 
-发布新版本时，先更新 `Cargo.toml` 和 `Cargo.lock` 中的项目版本，提交并推送到 `origin/main`，再推送对应的新 tag。例如版本为 `0.1.0` 时：
+发布新版本时，先更新 `Cargo.toml` 和 `Cargo.lock` 中的项目版本，提交并推送到 `origin/main`，再推送对应的新 tag。例如版本为 `0.1.1` 时：
 
 ```sh
-git tag -a v0.1.0 -m "MioTerm 0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "MioTerm 0.1.1"
+git push origin v0.1.1
 ```
 
 不要复用已有版本 tag；修复后重新发布应提升版本号。失败的构建可以在 Actions 中重新运行同一次工作流。旧的 CI 和 Release 历史记录仍会保留，但新的普通提交不再产生运行记录。

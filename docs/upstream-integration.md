@@ -7,7 +7,7 @@
 - Integrated upstream: `fdca49aca4400467ed08bd8d873f82348de797a3` (0.2.3, fetched 2026-11-06).
 - Upstream repository: https://github.com/ELY-Open-Source/ELYTerminal.
 - MioTerm keeps its own version, release tags and update endpoint.
-- MioTerm `v0.1.0` uses upstream 0.2.2; the 0.2.3 integration is not released yet.
+- MioTerm `v0.1.1` integrates upstream 0.2.3 and the follow-up review fixes.
 
 ## New Since Upstream 0.2.2
 
@@ -23,7 +23,7 @@
 - Windows ARM64 testing and packaging join MioTerm's existing tag-only workflow.
 
 GPUI remains pinned to 0.3.8, Ely to `294a832`. The Windows platform patch
-advances to `0b74ab7`; no toolchain or MioTerm version change is required.
+advances to `0b74ab7`; the toolchain stays unchanged, and MioTerm releases as 0.1.1.
 The shared session-row helper retains MioTerm's entity-based drag identities.
 
 ## New Since Upstream 0.2.0
@@ -103,6 +103,12 @@ Regression tests reproduced both bugs before their fixes. They cover client
 file preservation, shared-memory refusal, partial-transmission cancellation,
 streamed pixels and placements, and OSC 7 routing through an actual PTY.
 
+The 0.2.3 follow-up review found that finite picture settings such as `3e38%`
+can overflow during size or position calculations. Picture bounds are now
+checked before tiling or rendering; invalid bounds log the responsible setting
+and retain the window's ground. A regression test reproduced infinite bounds
+before the fix, and a normal positioning test preserves ordinary layouts.
+
 ## Validation
 
 Use the pinned Rust 1.95.0 toolchain. On local macOS installations without a
@@ -122,7 +128,7 @@ Platform-specific runtime behavior requires the corresponding operating system.
 
 On macOS with Rust 1.95.0 and runtime shaders:
 
-- Core regression: 617 passed, one opt-in Gitee test ignored, four shell tests filtered.
+- Core regression after review: 619 passed, one opt-in Gitee test ignored, four shell tests filtered.
 - Isolated fonts, application vault, actual askpass and generated RSA PEM tests pass.
 - All-target Clippy with warnings denied, formatting and the 500-line rule pass.
 - Release binary and native screenshot harness build successfully.
@@ -132,13 +138,18 @@ On macOS with Rust 1.95.0 and runtime shaders:
 - Native right-click events copy five selected fixture characters and paste five characters.
 - Appearance exposes all picture controls; Settings retains the Sync page.
 - Release YAML, version-tag-only trigger and ARM64 publication dependencies are checked.
+- Both opt-in loopback SSH tests pass: remote Git actions, SFTP transfers and directory reports.
+- Generated encrypted RSA PEM authentication and SFTP pass after the source key is removed.
+- A managed SSH session shows the background image and the URL hover underline.
+- Native SSH right-click paste delivers exactly `ESC[200~helloESC[201~` to a remote raw reader.
 
-Link detection and hover cell tests pass; the inactive screenshot harness did not
-confirm the hover underline visually. No live Gitee or loopback SSH tests ran in
-this integration. Two opt-in loopback tests remain ignored. Four shell tests
-require fish, PowerShell or platform-specific environments absent on this host.
-Windows and Linux native runtime/package checks remain outstanding.
-All credentials and configuration used in tests are generated fixtures.
+Link detection and hover cell tests pass, with the underline also confirmed in
+a native SSH screenshot. The two loopback tests are ignored by default and were
+explicitly run against an isolated local sshd with generated keys. No live Gitee
+tests ran. Four shell tests require fish, PowerShell or platform-specific
+environments absent on this host. Windows and Linux native runtime/package
+checks remain outstanding. All test credentials and configuration are generated
+fixtures; the local SSH master and server are closed after verification.
 
 ### Manual Checks for This Update
 

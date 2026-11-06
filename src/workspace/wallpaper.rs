@@ -103,9 +103,15 @@ pub(super) fn paint(
         return Some(ground().into_any_element());
     }
     let container = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-    let drawn = settings.background_size.points(intrinsic, container);
-    let free = (container.0 - drawn.0, container.1 - drawn.1);
-    let place = settings.background_position.points(free);
+    let picture = match picture_box(settings, intrinsic, container) {
+        Ok(picture) => picture,
+        Err(error) => {
+            log_failure(&path, error);
+            return Some(ground().into_any_element());
+        }
+    };
+    let drawn = (picture.size.width, picture.size.height);
+    let place = (picture.origin.x, picture.origin.y);
     let mut boxed = div()
         .absolute()
         .overflow_hidden()
@@ -117,6 +123,31 @@ pub(super) fn paint(
         boxed = boxed.child(tile(&image, x, y, drawn));
     }
     Some(ground().child(boxed).into_any_element())
+}
+
+fn picture_box(
+    settings: &Settings,
+    intrinsic: (f32, f32),
+    container: (f32, f32),
+) -> anyhow::Result<Bounds<f32>> {
+    let drawn = settings.background_size.points(intrinsic, container);
+    anyhow::ensure!(
+        [drawn.0, drawn.1]
+            .into_iter()
+            .all(|value| value.is_finite() && value >= 0.0),
+        "background_size {} produces invalid dimensions {drawn:?}",
+        settings.background_size
+    );
+    let free = (container.0 - drawn.0, container.1 - drawn.1);
+    let place = settings.background_position.points(free);
+    anyhow::ensure!(
+        [place.0, place.1, place.0 + drawn.0, place.1 + drawn.1]
+            .into_iter()
+            .all(f32::is_finite),
+        "background_position {} produces invalid bounds at {place:?}",
+        settings.background_position
+    );
+    Ok(Bounds::new(point(place.0, place.1), size(drawn.0, drawn.1)))
 }
 
 /// One tile of the picture, at `x` and `y` in its box.
@@ -277,5 +308,33 @@ mod tests {
             (1200.0, 100.0),
         );
         assert_eq!(row, vec![(0.0, 0.0)], "one axis past the cap draws once");
+    }
+
+    #[test]
+    fn overflowing_picture_sizes_and_positions_do_not_reach_the_renderer() {
+        let mut settings = Settings {
+            background_size: "3e38%".parse().unwrap(),
+            ..Settings::default()
+        };
+        let error = picture_box(&settings, (512.0, 512.0), (1200.0, 760.0)).unwrap_err();
+        assert!(error.to_string().contains("background_size"));
+        settings.background_size = "300px auto".parse().unwrap();
+        settings.background_position = "3e38% center".parse().unwrap();
+        let error = picture_box(&settings, (512.0, 512.0), (1200.0, 760.0)).unwrap_err();
+        assert!(error.to_string().contains("background_position"));
+    }
+
+    #[test]
+    fn ordinary_picture_positions_keep_their_offsets() {
+        let settings = Settings {
+            background_size: "300px auto".parse().unwrap(),
+            background_position: "right bottom".parse().unwrap(),
+            ..Settings::default()
+        };
+        let picture = picture_box(&settings, (512.0, 256.0), (1200.0, 760.0)).unwrap();
+        assert_eq!(
+            picture,
+            Bounds::new(point(900.0, 610.0), size(300.0, 150.0))
+        );
     }
 }
