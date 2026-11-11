@@ -1,4 +1,7 @@
+mod color;
 mod folder;
+mod language;
+mod mask;
 mod picture;
 mod profiles;
 mod store;
@@ -16,7 +19,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::themes;
 
+pub use color::color;
 pub(crate) use folder::folder;
+pub use language::Language;
+pub use mask::Mask;
 pub use picture::{PictureAxis, PictureLength, PicturePosition, PictureRepeat, PictureSize};
 pub use profiles::{Profile, command_line, words};
 pub use store::{SettingsStore, load, save};
@@ -71,25 +77,6 @@ pub enum Antialias {
     Subpixel,
 }
 
-/// The interface's language, by the tag Ely's `I18n` names it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Language {
-    #[default]
-    #[serde(rename = "en-US")]
-    English,
-    #[serde(rename = "zh-CN")]
-    SimplifiedChinese,
-}
-
-impl Language {
-    pub fn tag(self) -> &'static str {
-        match self {
-            Self::English => "en-US",
-            Self::SimplifiedChinese => "zh-CN",
-        }
-    }
-}
-
 /// What the right panel shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -126,6 +113,8 @@ pub struct Settings {
     pub start_folder: String,
     /// What the new-session menu offers before the detected shells.
     pub profiles: Vec<Profile>,
+    /// The keys the user chose, by command; a command left out keeps its own.
+    pub shortcuts: crate::keymap::Shortcuts,
     pub theme: String,
     /// The theme while the system is dark; none keeps `theme`.
     pub dark_theme: Option<String>,
@@ -141,6 +130,26 @@ pub struct Settings {
     pub background_position: PicturePosition,
     /// Whether the picture tiles to fill its box.
     pub background_repeat: PictureRepeat,
+    /// Whether a gradient paints over the picture.
+    pub background_gradient: bool,
+    /// The gradient's angle in degrees, 0 up and turning clockwise.
+    pub background_gradient_angle: f32,
+    /// The gradient's first color.
+    pub background_gradient_from: String,
+    /// The gradient's last color.
+    pub background_gradient_to: String,
+    /// How opaque the picture is, 0 to 1.
+    pub background_image_opacity: f32,
+    /// Whether a mask fades the picture, as CSS's `mask-image` does.
+    pub background_mask: bool,
+    /// The mask's angle in degrees, 0 up and turning clockwise.
+    pub background_mask_angle: f32,
+    /// The mask's size in the picture's box, as CSS's `mask-size`.
+    pub background_mask_size: PictureSize,
+    /// Where the mask sits in the picture's box, as CSS's `mask-position`.
+    pub background_mask_position: PicturePosition,
+    /// The mask's stops: two to sixteen colors, comma separated.
+    pub background_mask_stops: String,
     pub font_family: String,
     /// Families tried in order for a character Font family lacks.
     pub font_fallbacks: Vec<String>,
@@ -176,6 +185,8 @@ pub struct Settings {
     pub ely_left: f32,
     /// A check for a newer release at start and once a day.
     pub check_updates: bool,
+    /// Whether `elyterminal ctl` may read and type into sessions.
+    pub control: bool,
     pub show_sessions: bool,
     /// A drag moves a session's row in the list.
     pub drag_sessions: bool,
@@ -216,6 +227,7 @@ impl Default for Settings {
             start_in: StartIn::Home,
             start_folder: String::new(),
             profiles: Vec::new(),
+            shortcuts: crate::keymap::Shortcuts::new(),
             theme: themes::default_id().into(),
             dark_theme: None,
             custom_themes: Vec::new(),
@@ -224,6 +236,16 @@ impl Default for Settings {
             background_size: PictureSize::Cover,
             background_position: PicturePosition::default(),
             background_repeat: PictureRepeat::NoRepeat,
+            background_gradient: false,
+            background_gradient_angle: 180.0,
+            background_gradient_from: "#00000000".into(),
+            background_gradient_to: "#00000000".into(),
+            background_image_opacity: 1.0,
+            background_mask: false,
+            background_mask_angle: 90.0,
+            background_mask_size: PictureSize::Cover,
+            background_mask_position: PicturePosition::default(),
+            background_mask_stops: "transparent, black".into(),
             font_family: "JetBrains Mono".into(),
             font_fallbacks: Vec::new(),
             cjk_font: String::new(),
@@ -248,6 +270,7 @@ impl Default for Settings {
             ely: true,
             ely_left: 140.0,
             check_updates: true,
+            control: false,
             show_sessions: false,
             drag_sessions: true,
             session_menu: true,
@@ -276,6 +299,7 @@ pub const COLUMN: RangeInclusive<f32> = 160.0..=960.0;
 pub const WINDOW: RangeInclusive<f32> = 100.0..=16384.0;
 pub const ELY_LEFT: RangeInclusive<f32> = 0.0..=16384.0;
 pub const PLACE: RangeInclusive<f32> = -32768.0..=32768.0;
+pub const GRADIENT_ANGLE: RangeInclusive<f32> = 0.0..=360.0;
 
 impl Settings {
     /// Every value inside its range, every theme built in; the error names the field.
@@ -283,10 +307,25 @@ impl Settings {
         self.webdav.validate()?;
         self.sync.validate(&self.webdav)?;
         within("interface_size", self.interface_size, &INTERFACE_SIZE)?;
+        crate::keymap::check(&self.shortcuts)?;
         within("font_size", self.font_size, &FONT_SIZE)?;
         within("font_weight", self.font_weight, &FONT_WEIGHT)?;
         within("line_height", self.line_height, &LINE_HEIGHT)?;
         within("background_opacity", self.background_opacity, &OPACITY)?;
+        let angle = &GRADIENT_ANGLE;
+        within(
+            "background_gradient_angle",
+            self.background_gradient_angle,
+            angle,
+        )?;
+        color(&self.background_gradient_from).context("background_gradient_from")?;
+        color(&self.background_gradient_to).context("background_gradient_to")?;
+        let picture = self.background_image_opacity;
+        within("background_image_opacity", picture, &OPACITY)?;
+        within("background_mask_angle", self.background_mask_angle, angle)?;
+        let stops = &self.background_mask_stops;
+        Mask::new(self.background_mask_angle, stops, (1.0, 1.0))
+            .context("background_mask_stops")?;
         within("padding_x", self.padding_x, &PADDING)?;
         within("padding_y", self.padding_y, &PADDING)?;
         within("scrollback", self.scrollback, &SCROLLBACK)?;

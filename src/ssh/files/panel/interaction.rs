@@ -5,6 +5,17 @@ use super::RemoteFiles;
 use crate::ssh::files::Transfer;
 
 impl RemoteFiles {
+    pub fn terminal_path(
+        &self,
+        session: u64,
+        key: &gpui::SharedString,
+    ) -> Option<std::path::PathBuf> {
+        if !self.front || self.disconnected || self.connection.as_ref()?.session != session {
+            return None;
+        }
+        super::plan::terminal_path(session, self.remote.listing.as_ref()?, key)
+    }
+
     fn dragged_plan(&self, target_local: bool, drag: &TreeDrag) -> anyhow::Result<Transfer> {
         let source_local = !target_local;
         let keys = super::plan::selected(&self.browser(source_local).selected, drag.key());

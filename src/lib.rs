@@ -1,11 +1,13 @@
 pub mod app;
 pub mod blur;
+pub mod control;
 #[cfg(windows)]
 pub mod explorer;
 pub mod files;
 pub mod git;
 pub mod i18n;
 pub mod interface;
+pub mod keymap;
 pub mod menus;
 pub mod monitor;
 pub mod pet;

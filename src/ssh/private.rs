@@ -36,7 +36,7 @@ pub(super) fn regular(path: &Path, folder: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn folder(path: &Path) -> anyhow::Result<()> {
+pub(crate) fn folder(path: &Path) -> anyhow::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -59,7 +59,7 @@ pub(super) fn folder(path: &Path) -> anyhow::Result<()> {
 }
 
 #[cfg(unix)]
-pub(super) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
+pub(crate) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(
         path,
@@ -69,6 +69,6 @@ pub(super) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
 }
 
 #[cfg(windows)]
-pub(super) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
+pub(crate) fn protect(path: &Path, folder: bool) -> anyhow::Result<()> {
     windows::protect(path, folder)
 }

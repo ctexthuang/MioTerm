@@ -9,7 +9,8 @@ use super::Workspace;
 pub(super) mod remote;
 
 impl Workspace {
-    pub(super) fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Asks for a folder and opens the shown session's shell there.
+    pub(crate) fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.choosing_folder {
             return;
         }

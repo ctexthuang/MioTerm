@@ -16,6 +16,9 @@ name=${file##*/}
 case $name in
   MioTerm-[0-9]*.dmg) alias=MioTerm-macos-arm64.dmg ;;
   MioTerm-[0-9]*-windows-x86_64.zip) alias=MioTerm-windows-x86_64.zip ;;
+  MioTerm-[0-9]*-windows-aarch64.zip) alias=MioTerm-windows-aarch64.zip ;;
+  MioTerm-[0-9]*-windows-x86_64-setup.exe) alias=MioTerm-windows-x86_64-setup.exe ;;
+  MioTerm-[0-9]*-windows-aarch64-setup.exe) alias=MioTerm-windows-aarch64-setup.exe ;;
   MioTerm-[0-9]*-linux-x86_64.AppImage) alias=MioTerm-linux-x86_64.AppImage ;;
   elyterminal_[0-9]*_amd64.deb) alias=elyterminal_amd64.deb ;;
   elyterminal-[0-9]*-1.x86_64.rpm) alias=elyterminal.x86_64.rpm ;;

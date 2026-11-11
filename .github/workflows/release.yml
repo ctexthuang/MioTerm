@@ -83,10 +83,18 @@ jobs:
       - run: cargo build --locked
       - name: Package Windows without a publisher signature
         run: scripts/windows-zip.ps1
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS did not install" }
+          ./scripts/windows-installer.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: MioTerm-windows-x86_64
-          path: target/release/MioTerm-*-windows-x86_64.zip
+          path: |
+            target/release/MioTerm-*-windows-x86_64.zip
+            target/release/MioTerm-*-windows-x86_64-setup.exe
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -117,10 +125,18 @@ jobs:
       - name: Package Windows ARM64 without a publisher signature
         shell: pwsh
         run: ./scripts/windows-zip.ps1
+      - name: Build Windows ARM64 installer
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS did not install" }
+          ./scripts/windows-installer.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: MioTerm-windows-aarch64
-          path: target/release/MioTerm-*-windows-aarch64.zip
+          path: |
+            target/release/MioTerm-*-windows-aarch64.zip
+            target/release/MioTerm-*-windows-aarch64-setup.exe
           if-no-files-found: error
           retention-days: 14
           compression-level: 0

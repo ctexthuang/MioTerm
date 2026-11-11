@@ -23,7 +23,8 @@ pub fn command() -> String {
     let scripts: std::collections::BTreeMap<_, _> = scripts.into_iter().collect();
     let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
     format!(
-        "python3 -c {} {}",
+        "TERM_PROGRAM=mioterm TERM_PROGRAM_VERSION={} python3 -c {} {}",
+        env!("CARGO_PKG_VERSION"),
         quote(BOOTSTRAP),
         quote(&serde_json::to_string(&scripts).expect("ssh: serializable shell scripts"))
     )

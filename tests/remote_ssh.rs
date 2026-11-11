@@ -202,7 +202,10 @@ fn remote_shell_reports_cd_over_an_actual_ssh_channel() {
         "-c",
         &command,
     ];
-    let input = format!("cd '{}'\ncd second\nexit\n", home.display());
+    let input = format!(
+        "cd '{}'\ncd second\nprintf 'TERMINAL:%s:%s\\n' \"$TERM_PROGRAM\" \"$TERM_PROGRAM_VERSION\"\nexit\n",
+        home.display()
+    );
     let output = remote
         .output(
             &args.map(OsStr::new),
@@ -219,6 +222,10 @@ fn remote_shell_reports_cd_over_an_actual_ssh_channel() {
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(
         text.contains(&format!("\x1b]7;file://{}/second\x07", home.display())),
+        "{text:?}"
+    );
+    assert!(
+        text.contains(&format!("TERMINAL:mioterm:{}", env!("CARGO_PKG_VERSION"))),
         "{text:?}"
     );
     fs::remove_dir_all(home).unwrap();

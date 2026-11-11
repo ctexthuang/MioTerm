@@ -1,4 +1,4 @@
-use gpui::{Context, EntityId, Window};
+use gpui::{Context, EntityId, Focusable, Window};
 
 use super::Workspace;
 use crate::term::{State, TerminalEvent};
@@ -67,12 +67,18 @@ impl Workspace {
                 if index != self.active {
                     return;
                 }
-                match self.files.read(cx).path(key) {
+                let path = if session.remote.is_some() {
+                    self.remote_files.read(cx).terminal_path(id.as_u64(), key)
+                } else {
+                    self.files.read(cx).path(key)
+                };
+                match path {
                     Some(path) => {
                         log::info!("app: {} dragged onto the terminal", path.display());
                         session
                             .terminal
                             .update(cx, |view, cx| view.type_paths(&[path], cx));
+                        window.focus(&session.terminal.focus_handle(cx), cx);
                     }
                     None => log::warn!("app: a tree drag of {key} types nothing"),
                 }

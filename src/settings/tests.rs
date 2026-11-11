@@ -1,5 +1,7 @@
 use super::*;
 
+mod shortcuts;
+
 #[test]
 fn defaults_are_valid() {
     Settings::default().validate().expect("defaults pass");
@@ -418,4 +420,69 @@ fn a_picture_covers_its_box_unless_the_settings_say_more() {
         "{json}"
     );
     assert!(json.contains(r#""background_repeat":"repeat_x""#), "{json}");
+}
+
+#[test]
+fn a_gradient_keeps_its_angle_and_colors() {
+    let settings: Settings = serde_json::from_str("{}").expect("every field has a default");
+    assert!(!settings.background_gradient);
+    assert_eq!(settings.background_gradient_angle, 180.0);
+    assert_eq!(settings.background_gradient_from, "#00000000");
+    assert_eq!(settings.background_gradient_to, "#00000000");
+    let painted: Settings = serde_json::from_str(
+        r##"{"background_gradient":true,"background_gradient_angle":45,"background_gradient_from":"#202030cc","background_gradient_to":"#00000000"}"##,
+    )
+    .expect("a gradient");
+    assert!(painted.background_gradient);
+    assert_eq!(painted.background_gradient_angle, 45.0);
+    painted.validate().expect("the colors read");
+    let mut broken = painted.clone();
+    broken.background_gradient_from = "#zz".into();
+    assert!(broken.validate().is_err());
+    let json = serde_json::to_string(&painted).expect("the settings write");
+    assert!(
+        json.contains(r##""background_gradient_from":"#202030cc""##),
+        "{json}"
+    );
+}
+
+#[test]
+fn a_mask_and_the_pictures_opacity_keep_their_figures() {
+    let settings: Settings = serde_json::from_str("{}").expect("every field has a default");
+    assert_eq!(settings.background_image_opacity, 1.0);
+    assert!(!settings.background_mask);
+    assert_eq!(settings.background_mask_angle, 90.0);
+    assert_eq!(settings.background_mask_size, PictureSize::Cover);
+    assert_eq!(
+        settings.background_mask_position,
+        PicturePosition::default()
+    );
+    assert_eq!(settings.background_mask_stops, "transparent, black");
+    let masked: Settings = serde_json::from_str(
+        r##"{"background_image_opacity":0.25,"background_mask":true,"background_mask_angle":90,"background_mask_size":"40% 100%","background_mask_position":"right top","background_mask_stops":"transparent, black, black"}"##,
+    )
+    .expect("an opacity and a mask");
+    masked.validate().expect("they are in range");
+    assert_eq!(masked.background_mask_size.to_string(), "40% 100%");
+    assert_eq!(masked.background_mask_position.to_string(), "right top");
+    let mut broken = masked.clone();
+    broken.background_mask_stops = "black".into();
+    assert!(broken.validate().is_err(), "one stop is no mask");
+    let json = serde_json::to_string(&masked).expect("the settings write");
+    assert!(
+        json.contains(r##""background_image_opacity":0.25"##),
+        "{json}"
+    );
+    assert!(
+        json.contains(r##""background_mask_stops":"transparent, black, black""##),
+        "{json}"
+    );
+    assert!(
+        json.contains(r##""background_mask_size":"40% 100%""##),
+        "{json}"
+    );
+    assert!(
+        json.contains(r##""background_mask_position":"right top""##),
+        "{json}"
+    );
 }

@@ -3,11 +3,73 @@
 ## Baseline
 
 - MioTerm base: `ef22283` (`v0.1.0`).
-- Previously included upstream: `ba664ef6ef0cdfcb35dc6b65d538cc58e7ecd313` (0.2.2).
-- Integrated upstream: `fdca49aca4400467ed08bd8d873f82348de797a3` (0.2.3, fetched 2026-11-06).
+- Previously included upstream: `fdca49aca4400467ed08bd8d873f82348de797a3` (0.2.3).
+- Integrated upstream: `9504b5382f3b47b0377063fa3b78cb706f44ed08` (0.2.4, fetched 2026-11-11).
 - Upstream repository: https://github.com/ELY-Open-Source/ELYTerminal.
 - MioTerm keeps its own version, release tags and update endpoint.
 - MioTerm `v0.1.1` integrates upstream 0.2.3 and the follow-up review fixes.
+- Current source integrates upstream 0.2.4; no new MioTerm release tag is assigned.
+
+## New Since Upstream 0.2.3
+
+- A configurable keymap with recording, reset and conflicting-key validation.
+- Clear screen/history, retaining the prompt on Unix and history-only on Windows.
+- Optional authenticated local CLI: list sessions, read output, send text or keys.
+- Independent picture opacity, gradient colors/angle and a CSS-like gradient mask.
+- A folder chooser in the profiles menu and terminal focus after a file-tree drop.
+- Windows NSIS installers, Insert copy/paste keys and PowerShell policy fixes.
+- Narrow sidebar toggles and pixel-aligned Wayland desktop-character positioning.
+- Terminal name/version environment variables, propagated through WSL.
+
+GPUI, Ely and the platform patches stay pinned to the same revisions. Rust stays
+at 1.95.0. Windows installers use MioTerm names, registry keys and URLs and join
+the existing version-tag-only release workflow; upstream CI and website workflows
+stay excluded. The existing ELYTerminal data-directory names stay intact.
+
+### SSH Adaptation
+
+- Both sidebars remain closed at startup; SSH Hosts and Sync settings remain.
+- All custom terminal shortcuts, history clearing and backgrounds apply to SSH.
+- CLI lists remote POSIX folders, SSH endpoints and connection status; disconnected
+  sessions allow reading retained output but reject text and key input.
+- CLI uses the same `MIOTERM_CONFIG_DIR` override as settings, including isolated
+  test runs. Its token file has user-only Unix permissions or Windows ACLs and
+  stays outside encrypted SSH cloud archives.
+- Local and managed remote shells report `TERM_PROGRAM=mioterm` with this fork's
+  version, without depending on a server's `AcceptEnv` setting.
+- The profiles menu's folder chooser uses the active session's local or remote
+  backend. Local profiles remain local even while a remote session is active.
+- Remote tree-to-terminal drags resolve only the active SSH pane's current keys,
+  quote paths for the remote shell and focus its terminal. Local-to-remote and
+  remote-to-local SFTP drags retain their transfer confirmation and task queue.
+- Existing picture size/position overflow checks are preserved with the new mask.
+
+The Windows typed-space issue remains an upstream diagnostic change, not a fix.
+
+### Current 0.2.4 Checks
+
+On macOS with runtime shaders, 698 core tests pass, one opt-in cloud test stays
+ignored and four shell/environment-dependent tests are filtered. Font loading,
+encrypted application-vault and real askpass tests also pass. Three explicit
+loopback SSH tests pass: remote Git/SFTP, changed transfer-path types, and remote
+shell directory/terminal-version reports. All fixtures use generated keys and
+isolated configuration; no production SSH hosts or cloud stores are used.
+
+Native macOS windows additionally verify custom Clear/New session shortcuts,
+local and SSH CLI input/read/key operations, remote directory listing and refusal
+of input after SSH disconnects. SSH Clear and a remote filename containing a
+space and quote pass a real tree-to-terminal drop with subsequent typing. A
+local-to-remote UI drag, confirmation and SFTP upload produce matching contents,
+and the inline task area opens automatically and displays the completed job.
+
+All-target Clippy with denied warnings, formatting, whitespace and the 500-line
+rule pass. The release binary and screenshot harness build. The release YAML
+passes Actionlint 1.7.7 with its outdated `windows-11-arm` label warning excluded;
+the hosted ARM runner and the single tag-only trigger remain unchanged.
+
+Manual verification is described in [0.2.4 testing](upstream-024-testing.md).
+Windows/Linux native runtime and Windows installer execution require those
+platforms and are not verified by a macOS test run.
 
 ## New Since Upstream 0.2.2
 

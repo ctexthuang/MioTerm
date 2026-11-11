@@ -24,6 +24,8 @@
 
 `v0.1.2` 参照 Termora 重做 SSH 同步：稳定连接身份避免改组后重复，删除记录跨机传播，Gitee 固定更新同一个私密片段。同步策略支持手动或修改后随机延迟 10–29 秒，并显示最后成功时间；修复共享凭据版本、历史连接认证及同步期间本地修改的冲突。所有设备需升级后再共用新格式云端库，迁移后勿用旧版打开同一本地数据目录。详见 [同步说明](docs/ssh-sync.md)。
 
+当前源码进一步融合 ELYTerminal 0.2.4 的 `9504b53`：可自定义快捷键、清理终端历史，设置背景图透明度、渐变和蒙版，并可启用本地 CLI 操作本地及 SSH 会话。Windows 打包新增每用户安装程序；这些源码更新尚未发布新版本。
+
 ## 当前功能
 
 ### 本地终端与界面
@@ -36,15 +38,16 @@
 - 支持自定义启动配置及检测本机 shell，左侧加号旁的菜单可选择启动；支持命令行目录参数。
 - 支持链接悬停下划线，以及可选的右键复制选区／无选区时粘贴；Windows 默认启用右键粘贴。
 - **每次启动时左右侧栏均默认收起**，点击标题栏两端的图标或使用快捷键再展开，不恢复上次的展开状态。
-- 左侧可切换会话与 SSH 主机；右侧通过图标切换监控、Files、Git 和传输任务，侧栏宽度支持拖动调整。
+- 左侧可切换会话与 SSH 主机；右侧通过图标切换监控、Files 和 Git，传输任务位于 SSH 的本地与远程文件区域之间，侧栏宽度支持拖动调整。
 - 保留上游的 Ely 桌面角色、会话状态标记、通知、主题、透明度与背景模糊。
 - 支持 Catppuccin Mocha 等内置主题，监控面板跟随应用主题，Mocha 的主要高亮使用粉色。
 - 设置中的上游终端界面支持英文、简体中文切换；MioTerm 新增的部分 SSH、监控和同步界面仍为英文。
 - 支持新建、编辑自定义主题、选择终端背景图，并记住窗口的显示器和位置。
 - 背景透明度可设为 0–100%；背景图可覆盖终端或整个窗口，并设置大小、位置与平铺。
+- 背景图可设置独立透明度、叠加渐变及渐变蒙版；终端快捷键可在 Settings > Terminal > Shortcuts 中修改或恢复。
 - 支持拖动会话排序和会话右键复制、关闭；复制 SSH 会话会重连原主机，并从已报告的远程目录启动。
 - 可在设置中启用本地 Files 右键菜单，提供打开、复制路径和在此处新建本地会话。
-- Files 展示时每秒刷新文件与 Git 标记；可将本地文件树条目拖入终端输入路径，右键 Files 图标可选择目录，按当前本地或 SSH 会话新建对应会话。
+- Files 展示时每秒刷新文件与 Git 标记；本地文件或远程文件条目可拖入对应终端输入路径并聚焦；右键 Files 图标或打开加号旁菜单可选择目录，按当前本地或 SSH 会话新建对应会话。
 - 可设置界面字体与字号、终端字重、独立中日韩字体、抗锯齿模式和平滑光标。
 - 支持 Kitty 图片协议与动画、OSC 5522 剪贴板协议；程序读取剪贴板前默认请求许可。
 - 历史记录空闲后压缩存储，采用上游的 ASCII 解析和文本绘制优化。
@@ -183,7 +186,7 @@ Gitee 上传前会复查、上传后会读回校验，但其 API 没有保证原
 |---|---|
 | Rust | edition 2024；`rust-toolchain.toml` 固定 `1.95.0` |
 | GPUI | `gpui-pre` / `gpui-pre-platform`，固定 `0.3.8` |
-| Ely | `ely-gpui-component`，固定 Git revision `494c17d` |
+| Ely | `ely-gpui-component`，固定 Git revision `294a832` |
 | 终端引擎 | `alacritty_terminal` `0.26.0`，使用上游固定 revision 的引擎与 `vte` 补丁 |
 | SSH / SFTP / Git | 系统命令行客户端 |
 | 同步与凭据 | `age`、`ureq` / rustls；`keyring` 仅用于显式导入旧版系统凭据 |
@@ -212,14 +215,14 @@ sudo apt-get install pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11
 打包脚本基于原项目调整，应用显示名与发行包名使用 MioTerm，Rust crate 和已有配置目录仍保留原名称：
 
 - macOS：`scripts/mac-app.sh`。
-- Windows：`scripts/windows-zip.ps1`。
+- Windows：`scripts/windows-zip.ps1`；安装程序由 `scripts/windows-installer.ps1` 使用 NSIS 从打包文件生成。
 - Linux：`scripts/linux-packages.sh`，需要 Docker，在 Ubuntu 22.04 构建 tar.gz、DEB、RPM、AppImage；也可单独运行 `scripts/linux-tar.sh`。
 
 macOS 打包默认使用 ad-hoc 签名，不包含 Developer ID 签名或 Apple 公证；Windows 测试包也没有发布者签名，系统可能提示安全警告。修改版发行入口为 [MioTerm Releases](https://github.com/ctexthuang/MioTerm/releases)，仅在发布构建后提供下载。安装包附带项目及现有第三方许可文件。
 
 ## 快捷键
 
-Settings > Terminal 中可查看当前平台的绑定。
+Settings > Terminal > Shortcuts 中可查看、修改或重置当前平台的绑定；下表为默认值，本地及 SSH 会话共用。
 
 | 操作 | macOS | Windows / Linux |
 |---|---|---|
@@ -232,6 +235,7 @@ Settings > Terminal 中可查看当前平台的绑定。
 | 复制 / 粘贴 | Cmd-C / Cmd-V | Ctrl-Shift-C / Ctrl-Shift-V；Windows 也支持 Ctrl-V |
 | 全选 | Cmd-A | Ctrl-Shift-A |
 | 查找 | Cmd-F | Ctrl-Shift-F |
+| 清屏及历史清理 | Cmd-K | Ctrl-Shift-K |
 | 上一个 / 下一个提示符 | Cmd-Up / Cmd-Down | Ctrl-Shift-Up / Ctrl-Shift-Down |
 | 放大 / 缩小 / 重置字号 | Cmd-= / Cmd-minus / Cmd-0 | Ctrl-= / Ctrl-minus / Ctrl-0 |
 | 打开链接 | Cmd-点击 | Ctrl-点击 |
@@ -251,6 +255,8 @@ Settings > Terminal 中可查看当前平台的绑定。
 更新检查默认读取本仓库 MioTerm 的 Releases，保留启动检查、每日检查、手动检查与打开下载页的原有流程，不会回退到上游发行包。可在 Settings > Terminal 中关闭自动检查；仓库没有已发布的 Release 或不可访问时会显示检查失败。
 
 日志写入 stderr，设置 `RUST_LOG=elyterminal=debug` 可增加诊断信息。Windows release 构建不打开控制台，可使用 `elyterminal.exe 2> log.txt` 保留日志。分享日志前请检查并移除主机地址、用户名和路径等信息。
+
+可在 Settings > Terminal 启用默认关闭的 Command line control，使用 `elyterminal ctl sessions` 列出本地和 SSH 会话，`ctl read PID 20` 读取最近输出，`ctl send PID 'pwd'` 发送文本及回车，`ctl key PID ctrl-c` 发送按键。会话列表包含真实远程目录、SSH 端点和连接状态；断线会话仅可读取，不接受输入。控制接口使用带令牌的本机回环连接，令牌文件遵循应用配置目录和当前用户权限，不参与 SSH 云同步。
 
 ## 开发与验证
 

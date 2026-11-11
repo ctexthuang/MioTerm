@@ -13,7 +13,7 @@ mod keepalive;
 mod keys;
 pub mod panel;
 mod prepare;
-mod private;
+pub(crate) mod private;
 pub mod reconnect;
 mod records;
 pub mod remote;

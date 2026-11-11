@@ -201,13 +201,11 @@ impl Workspace {
             )
             .children(error)
             .child(div().flex_1().min_h_0().p_2().child(body));
-        let mut column = self
+        let column = self
             .side_column(Side::Sessions, cx)
             .leading(left)
-            .action(self.new_menu(cx));
-        if let Some(profiles) = crate::profiles::button(&cx.entity(), &self.found, cx) {
-            column = column.action(profiles);
-        }
+            .action(self.new_menu(cx))
+            .action(crate::profiles::button(&cx.entity(), &self.found, cx));
         column.child(list)
     }
 

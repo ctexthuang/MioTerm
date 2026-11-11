@@ -22,6 +22,18 @@ pub(super) fn selected(keys: &[SharedString], clicked: &SharedString) -> Vec<Sha
     }
 }
 
+pub(super) fn terminal_path(
+    session: u64,
+    listing: &Listing,
+    dragged: &SharedString,
+) -> Option<std::path::PathBuf> {
+    let entry = listing
+        .entries
+        .iter()
+        .find(|entry| key(Some(session), false, Some(&listing.path), entry) == *dragged)?;
+    listing.path.join(&entry.name.0).ok()?.local_path().ok()
+}
+
 pub(super) fn build(
     connection: &Remote,
     local: &Listing,
@@ -155,6 +167,22 @@ mod tests {
         assert!(build(&connection, &local, &remote, false, &keys).is_err());
         remote.entries[0].link = true;
         assert!(build(&connection, &local, &remote, false, &keys[..1]).is_err());
+    }
+
+    #[test]
+    fn terminal_drags_only_resolve_the_current_remote_pane() {
+        let (_, local, remote) = fixture();
+        let dragged = key(Some(42), false, Some(&remote.path), &remote.entries[0]);
+        assert_eq!(
+            terminal_path(42, &remote, &dragged)
+                .unwrap()
+                .to_string_lossy(),
+            "/remote/first.txt"
+        );
+        assert!(terminal_path(43, &remote, &dragged).is_none());
+        assert!(terminal_path(42, &local, &dragged).is_none());
+        let local_drag = key(Some(42), true, Some(&local.path), &local.entries[0]);
+        assert!(terminal_path(42, &remote, &local_drag).is_none());
     }
 
     #[test]

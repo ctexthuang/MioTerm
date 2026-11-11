@@ -26,7 +26,7 @@ fn a_duplicate_remote_shell_opens_in_its_reported_folder() {
         .stdin
         .take()
         .unwrap()
-        .write_all(b"printf 'DUPLICATE:%s\\n' \"$PWD\"\nexit\n")
+        .write_all(b"printf 'DUPLICATE:%s\\n' \"$PWD\"\nprintf 'TERMINAL:%s:%s\\n' \"$TERM_PROGRAM\" \"$TERM_PROGRAM_VERSION\"\nexit\n")
         .unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(
@@ -39,6 +39,10 @@ fn a_duplicate_remote_shell_opens_in_its_reported_folder() {
             .contains(&format!("DUPLICATE:{}", folder.display())),
         "{:?}",
         String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(&format!("TERMINAL:mioterm:{}", env!("CARGO_PKG_VERSION")))
     );
     fs::remove_dir_all(root).unwrap();
 }
