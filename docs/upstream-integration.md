@@ -8,7 +8,7 @@
 - Upstream repository: https://github.com/ELY-Open-Source/ELYTerminal.
 - MioTerm keeps its own version, release tags and update endpoint.
 - MioTerm `v0.1.1` integrates upstream 0.2.3 and the follow-up review fixes.
-- Current source integrates upstream 0.2.4; no new MioTerm release tag is assigned.
+- MioTerm `v0.1.3` integrates upstream 0.2.4, inline SFTP tasks and SSH reconnection.
 
 ## New Since Upstream 0.2.3
 

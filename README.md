@@ -14,7 +14,7 @@
 - 本修改版主要扩展 SSH、SFTP、远程 Git、系统监控、WebDAV 同步及相关交互，不将这些新增功能归为上游已发布功能。
 - 原项目的版权声明、MIT 许可证和第三方许可文件予以保留。感谢原作者和所有上游贡献者。
 
-当前 `Cargo.toml` 的版本号为 `0.1.2`。安装包通过本仓库的 Releases 发布，最新版本标记为 Latest；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
+当前 `Cargo.toml` 的版本号为 `0.1.3`。安装包通过本仓库的 Releases 发布，最新版本标记为 Latest；上游 GitHub Releases 的发行包**不代表包含本 README 描述的 SSH 增强功能**。
 
 `v0.0.9` 已合并 ELYTerminal 0.2.0 的上游提交 [`6936b6f`](https://github.com/ELY-Open-Source/ELYTerminal/commit/6936b6f3edb5f55891dd62898290994f52e24dc0)，并修复 SSH 部分凭据缺失时的同步和本机删除记录被恢复的问题。集成范围见 [上游同步记录](docs/upstream-integration.md)，测试步骤见 [测试指南](docs/testing.md)。
 
@@ -24,7 +24,7 @@
 
 `v0.1.2` 参照 Termora 重做 SSH 同步：稳定连接身份避免改组后重复，删除记录跨机传播，Gitee 固定更新同一个私密片段。同步策略支持手动或修改后随机延迟 10–29 秒，并显示最后成功时间；修复共享凭据版本、历史连接认证及同步期间本地修改的冲突。所有设备需升级后再共用新格式云端库，迁移后勿用旧版打开同一本地数据目录。详见 [同步说明](docs/ssh-sync.md)。
 
-当前源码进一步融合 ELYTerminal 0.2.4 的 `9504b53`：可自定义快捷键、清理终端历史，设置背景图透明度、渐变和蒙版，并可启用本地 CLI 操作本地及 SSH 会话。Windows 打包新增每用户安装程序；这些源码更新尚未发布新版本。
+`v0.1.3` 进一步融合 ELYTerminal 0.2.4 的 `9504b53`：可自定义快捷键、清理终端历史，设置背景图透明度、渐变和蒙版，并可启用本地 CLI 操作本地及 SSH 会话。增加位于本地与远程窗格之间的 SFTP 任务区、双向拖拽传输和 SSH 手动／可选自动重连，Windows 打包新增每用户安装程序。验证步骤见 [本次测试方案](docs/upstream-024-testing.md)。
 
 ## 当前功能
 
@@ -289,11 +289,11 @@ git merge upstream/main
 
 工作流使用 GitHub 托管的 macOS、Windows 和 Ubuntu runner，不需要原作者的自托管机器；macOS 会安装 shell 测试需要的 fish，Linux 保留原有的容器测试环境。同一次运行中包含三端任务，全部检查和打包成功后，使用已推送的 tag 创建普通 Release 并标记为 Latest，附上 macOS arm64、Windows x86_64、Linux x86_64 安装包与 SHA-256 校验文件；不使用原作者的签名身份或私钥，也不会覆盖上游的旧版本标签。
 
-发布新版本时，先更新 `Cargo.toml` 和 `Cargo.lock` 中的项目版本，提交并推送到 `origin/main`，再推送对应的新 tag。例如版本为 `0.1.2` 时：
+发布新版本时，先更新 `Cargo.toml` 和 `Cargo.lock` 中的项目版本，提交并推送到 `origin/main`，再推送对应的新 tag。例如版本为 `0.1.3` 时：
 
 ```sh
-git tag -a v0.1.2 -m "MioTerm 0.1.2"
-git push origin v0.1.2
+git tag -a v0.1.3 -m "MioTerm 0.1.3"
+git push origin v0.1.3
 ```
 
 不要复用已有版本 tag；修复后重新发布应提升版本号。失败的构建可以在 Actions 中重新运行同一次工作流。旧的 CI 和 Release 历史记录仍会保留，但新的普通提交不再产生运行记录。
