@@ -160,7 +160,7 @@ fn encryption_passphrases_require_at_least_six_characters() {
 }
 
 #[test]
-fn keepalive_is_local_and_does_not_change_archive_or_credential_identity() {
+fn connection_recovery_is_local_and_does_not_change_archive_or_credential_identity() {
     let folder = Folder::new();
     let mut local = folder.local("keepalive-key");
     let before = serde_json::to_value(Archive::capture(&local).unwrap()).unwrap();
@@ -168,6 +168,7 @@ fn keepalive_is_local_and_does_not_change_archive_or_credential_identity() {
         enabled: false,
         interval: 75,
     };
+    local.hosts[0].auto_reconnect = true;
     let archive = Archive::capture(&local).unwrap();
     assert_eq!(before, serde_json::to_value(&archive).unwrap());
     let restored = archive
@@ -178,6 +179,7 @@ fn keepalive_is_local_and_does_not_change_archive_or_credential_identity() {
         .restore(Connections::default(), &folder.0.join("new"))
         .unwrap();
     assert_eq!(fresh.hosts[0].keepalive, crate::ssh::Keepalive::default());
+    assert!(!fresh.hosts[0].auto_reconnect);
 }
 
 #[test]

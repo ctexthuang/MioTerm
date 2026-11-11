@@ -19,6 +19,11 @@ Multiple selection uses the tree's existing keyboard and mouse controls.
 Dropping local files or folders from the system file manager onto the remote
 pane uploads them to its currently displayed folder, after confirmation.
 The remote pane highlights valid drop targets using the current theme.
+Right-click a local file or folder to upload, or a remote item to download.
+Right-clicking a member of a multi-selection preserves the selected group.
+Drag from the local pane to the remote pane to upload, or in reverse to download.
+The destination is the opposite pane's currently open directory, including when
+dropping over a listed row. All routes share the same confirmation and queue.
 
 Transfers run through the system `sftp` client. Files and recursive folders are
 supported. Every transfer asks for confirmation before writing, including the
@@ -27,15 +32,42 @@ links and special files cannot be selected for transfer. SFTP does not follow
 symbolic links while recursively copying a folder. A same-name destination
 which is a link, special file or a different kind is refused.
 
-The transfer can be cancelled. Failed or cancelled transfers may leave partial
-files; this version does not promise atomic transfer, resume, or byte progress.
-The transfer bar reports running, completed and failed operations. Successful
-transfers refresh both directory listings. Confirmation captures the original
+Queued tasks automatically reveal the SFTP channel and transfer list between the
+panes. The channel shows the user, host and port; its tooltip explains whether
+SFTP reuses the current SSH connection. The double-arrow button toggles the list
+with a queue and results for the current application run. Each selected file or
+recursive folder is one serial task with its status and elapsed time. Hover a
+task for the original host, paths and full failure reason. The list supports cancel, retry
+from the beginning, clear finished history and open the local folder. Switching
+sessions or hiding the sidebar does not stop tasks; exiting the app does.
+The queue holds at most 200 tasks, including finished history. Failed or cancelled
+transfers may leave partial files; retry overwrites them rather than resuming.
+Progress counts completed items, with an activity indicator during each item;
+there is no byte percentage, speed estimate, atomic transfer or resume. Transfers
+refresh both directory listings. Confirmation captures the original
 files, host and destination; closing the dialog cannot erase the confirmed task.
 Paths containing control characters are listed safely but refused for batch
 transfer, rather than interpreted as another SFTP command. Names stay bytes in
 the directory protocol; a name not representable on the local platform is
 refused when downloading it.
+
+## Reconnection
+
+Disconnected SSH sessions offer Reconnect in the title bar and session menu.
+Reconnection replaces the terminal in the same session row, retaining its name,
+position and last remote folder. It does not replay commands, restore terminal
+scrollback or recover a remote program; use remote tools such as tmux separately.
+The Files, Git and monitoring panels attach to the new connection. Queued and
+retryable transfer tasks follow that session's new control socket.
+
+Each saved host has an optional automatic reconnect switch, off by default and
+stored locally like keepalive. After a successful remote folder report, SSH exit
+code 255 schedules at most five attempts, delayed 2, 5, 10, 20 and 30 seconds.
+Ordinary exit, initial sign-in failures and local sessions do not retry. Detection
+depends on OpenSSH and the configured keepalive interval. Automatic attempts use
+strict host verification and saved credentials or noninteractive authentication.
+They cannot reuse a password entered only in a terminal. Stop in the title bar
+while waiting, close the session, or reconnect manually after the retry limit.
 
 ## Git
 
@@ -63,9 +95,9 @@ remote paths as local folders.
   integration and directory listing, Git for the Git tab, and an enabled SFTP
   subsystem for transfers. An unsupported shell reports an explicit error.
 - Authentication can use OpenSSH config, Password, Private key, or SSH Agent.
-  Password and private-key passphrase storage is opt-in via the system
-  keychain (macOS), Credential Manager (Windows), or Secret Service (Linux).
-  A missing or locked credential store produces an error, never a JSON fallback.
+  Password and private-key passphrase storage is opt-in via the application-owned
+  encrypted file vault on all three platforms. System credential stores are used
+  only by the explicit legacy import action in Settings > Sync.
 - Saved credentials are supplied through an askpass helper, not arguments,
   environment variables or temporary files. Unknown host fingerprints still
   require the user's terminal confirmation. OTP/MFA prompts are not answered by
@@ -76,9 +108,9 @@ remote paths as local folders.
 - Background clients always use strict host-key verification. They enable
   askpass only for an explicitly saved credential, never accept unknown hosts,
   and otherwise use BatchMode.
-- WebDAV sync includes authentication mode and actual selected key material.
-  System keychain passwords/passphrases and the save-credential preference
-  are local to each computer and are not part of that archive.
+- Gitee/WebDAV sync includes authentication mode and actual selected key material.
+  Explicit credential inclusion also transfers saved passwords/passphrases inside
+  the encrypted archive. Keepalive and reconnect preferences remain local.
 - Disconnected sessions disable new file transfers and Git actions. Refresh
   Files after finishing authentication if the initial directory read timed out.
 - Directory listings are capped at 10,000 entries with an explicit error.

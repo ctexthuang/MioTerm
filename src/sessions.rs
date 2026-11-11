@@ -34,6 +34,8 @@ pub struct Session {
     pub remote_folder: Option<crate::ssh::files::RemotePath>,
     pub control: Option<crate::ssh::control::Control>,
     pub disconnected: bool,
+    pub recovery: crate::ssh::reconnect::Recovery,
+    pub reconnecting: Option<gpui::Task<()>>,
     pub terminal: Entity<TerminalView>,
     /// The program's title; empty while it names none.
     pub title: String,
@@ -69,6 +71,15 @@ impl Session {
 
     /// The look its mark takes from its terminal now.
     pub fn looks(&self, cx: &App) -> Option<Look> {
+        use crate::ssh::reconnect::Phase;
+        if self.remote.is_some() {
+            match self.recovery.phase(self.disconnected) {
+                Phase::Connecting => return Some(Look::Working(None)),
+                Phase::Waiting => return Some(Look::Waiting),
+                Phase::Disconnected => return None,
+                Phase::Ready => {}
+            }
+        }
         let view = self.terminal.read(cx);
         let failed = view.ended().is_some_and(|code| code != 0);
         look(view.records().shown().map(|(_, record)| record), failed)
@@ -183,10 +194,18 @@ pub fn row(
         return item.into_any_element();
     }
     let id = session.terminal.entity_id();
-    ContextMenu::new(("session-menu", pid), menu::row(workspace, id, cx))
-        .w_full()
-        .child(item)
-        .into_any_element()
+    ContextMenu::new(
+        ("session-menu", pid),
+        menu::row(
+            workspace,
+            id,
+            session.remote.is_some() && session.disconnected,
+            cx,
+        ),
+    )
+    .w_full()
+    .child(item)
+    .into_any_element()
 }
 
 /// The field a session's row renames it with; Escape drops what it holds.
@@ -238,12 +257,28 @@ fn mark(session: &Session, now: Instant, cx: &App) -> Option<AnyElement> {
     let pid = session.terminal.read(cx).pid() as usize;
     // Hover reads the records as they stand, so an open one follows them, and scrolls within the window.
     let watched = session.terminal.downgrade();
+    let connection = session.remote.as_ref().and_then(|_| {
+        use crate::ssh::reconnect::Phase;
+        match session.recovery.phase(session.disconnected) {
+            Phase::Connecting => Some(text(cx, "et.ssh.connecting", &[])),
+            Phase::Waiting => Some(text(
+                cx,
+                "et.ssh.reconnect_wait",
+                &[("attempt", &session.recovery.attempts.to_string())],
+            )),
+            _ => None,
+        }
+    });
     let tip = Tooltip::rich(move |window, cx| {
-        let lines = watched.upgrade().map_or_else(Vec::new, |terminal| {
-            let view = terminal.read(cx);
-            let failed = view.ended().filter(|&code| code != 0);
-            hover(view.records(), failed, cx.global::<I18n>())
-        });
+        let lines = if let Some(connection) = &connection {
+            vec![connection.clone()]
+        } else {
+            watched.upgrade().map_or_else(Vec::new, |terminal| {
+                let view = terminal.read(cx);
+                let failed = view.ended().filter(|&code| code != 0);
+                hover(view.records(), failed, cx.global::<I18n>())
+            })
+        };
         let room = window.viewport_size().height - rems(3.).to_pixels(window.rem_size());
         div()
             .id("session-hover")

@@ -81,11 +81,17 @@ impl Workspace {
                 let pid = session.terminal.read(cx).pid();
                 log::info!("app: session {pid}'s program ended, {status}");
                 if session.remote.is_some() {
+                    if session.disconnected {
+                        return;
+                    }
                     session.disconnected = true;
+                    self.transfers
+                        .update(cx, |tasks, cx| tasks.bind(id.as_u64(), None, cx));
                     if index == self.active {
                         self.follow_monitor(cx);
                         self.follow_files(cx);
                     }
+                    self.schedule_reconnect(id, status.code(), window, cx);
                     cx.notify();
                 } else {
                     self.close(index, window, cx);

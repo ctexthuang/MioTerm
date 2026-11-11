@@ -213,21 +213,42 @@ impl Workspace {
 
     pub(super) fn reconnect_button(&self, cx: &Context<Self>) -> Option<IconButton> {
         let session = self.sessions.get(self.active)?;
-        let host = session.remote.as_ref()?.clone();
+        session.remote.as_ref()?;
         if !session.disconnected {
             return None;
         }
         let owner = cx.entity();
+        let id = session.terminal.entity_id();
+        let waiting = session.recovery.waiting;
         Some(
-            IconButton::new("ssh-reconnect", IconName::RefreshCw)
-                .variant(ButtonVariant::Ghost)
-                .size(ControlSize::Sm)
-                .tooltip("Reconnect")
-                .on_click(move |_, window, cx| {
-                    owner.update(cx, |workspace, cx| {
-                        workspace.connect(host.clone(), window, cx);
-                    })
-                }),
+            IconButton::new(
+                "ssh-reconnect",
+                if waiting {
+                    IconName::X
+                } else {
+                    IconName::RefreshCw
+                },
+            )
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Sm)
+            .tooltip(ely_gpui_component::i18n::text(
+                cx,
+                if waiting {
+                    "et.ssh.stop_reconnect"
+                } else {
+                    "et.ssh.reconnect"
+                },
+                &[],
+            ))
+            .on_click(move |_, window, cx| {
+                owner.update(cx, |workspace, cx| {
+                    if waiting {
+                        workspace.stop_reconnect(id, cx);
+                    } else {
+                        workspace.reconnect(id, false, window, cx);
+                    }
+                })
+            }),
         )
     }
 }

@@ -93,6 +93,15 @@ impl Workspace {
         folder: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
+        if self.sessions[index].disconnected {
+            log::debug!(
+                "ssh: late folder report ignored after session {} disconnected",
+                index + 1
+            );
+            return;
+        }
+        self.sessions[index].recovery.ready();
+        self.sessions[index].reconnecting = None;
         self.sessions[index].remote_folder = Some(RemotePath::from_path(folder));
         if index == self.active {
             self.follow_files(cx);

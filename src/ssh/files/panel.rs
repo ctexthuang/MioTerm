@@ -13,6 +13,9 @@ use super::{Entry, Listing, Remote, RemotePath, Transfer};
 
 mod actions;
 mod confirm;
+mod interaction;
+mod menu;
+mod plan;
 mod refresh;
 mod status;
 mod upload;
@@ -50,6 +53,7 @@ struct Browser {
     marking: bool,
     checking: Option<Task<()>>,
     generation: usize,
+    menu: Option<menu::Ask>,
     cancel: Cancel,
     reading: Option<Task<()>>,
 }
@@ -63,9 +67,11 @@ pub struct RemoteFiles {
     local_path: Entity<TextInput>,
     remote_path: Entity<TextInput>,
     pending: Option<Transfer>,
-    transfer: Option<Cancel>,
-    transferring: Option<Task<()>>,
-    transfer_status: Option<String>,
+    transfers: Entity<crate::ssh::transfers::Transfers>,
+    show_transfers: bool,
+    menu_number: u64,
+    _transfers: Subscription,
+    _finished: Subscription,
     transfer_error: Option<String>,
     front: bool,
     _polling: Task<()>,
@@ -113,6 +119,22 @@ fn local_list(path: &std::path::Path) -> anyhow::Result<Listing> {
 
 impl RemoteFiles {
     pub fn new(home: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let transfers = crate::ssh::transfers::Transfers::get(cx);
+        let observed = cx.observe(&transfers, |_, _, cx| cx.notify());
+        let finished = cx.subscribe(
+            &transfers,
+            |panel, _, event: &crate::ssh::transfers::Finished, cx| {
+                panel.refresh_local(cx);
+                if panel
+                    .connection
+                    .as_ref()
+                    .is_some_and(|connection| connection.session == event.0.session)
+                    && !panel.disconnected
+                {
+                    panel.refresh_remote(cx);
+                }
+            },
+        );
         let local_path = cx.new(|cx| TextInput::new(window, cx).label("Local path"));
         let remote_path = cx.new(|cx| TextInput::new(window, cx).label("Remote path"));
         let inputs = [(&local_path, true), (&remote_path, false)]
@@ -138,9 +160,11 @@ impl RemoteFiles {
             local_path,
             remote_path,
             pending: None,
-            transfer: None,
-            transferring: None,
-            transfer_status: None,
+            transfers,
+            show_transfers: false,
+            menu_number: 0,
+            _transfers: observed,
+            _finished: finished,
             transfer_error: None,
             front: false,
             _polling: Self::poll(cx),
@@ -158,6 +182,18 @@ impl RemoteFiles {
         } else {
             &mut self.remote
         }
+    }
+
+    fn key(&self, local: bool, entry: &Entry) -> SharedString {
+        plan::key(
+            self.connection.as_ref().map(|remote| remote.session),
+            local,
+            self.browser(local)
+                .listing
+                .as_ref()
+                .map(|listing| &listing.path),
+            entry,
+        )
     }
 
     fn enter(&mut self, local: bool, text: String, cx: &mut Context<Self>) {
@@ -326,6 +362,7 @@ impl RemoteFiles {
         background: bool,
         cx: &mut Context<Self>,
     ) {
+        let session = self.connection.as_ref().map(|remote| remote.session);
         let browser = self.browser_mut(local);
         browser.busy = false;
         browser.refreshing = false;
@@ -357,7 +394,7 @@ impl RemoteFiles {
                 let keys = listing
                     .entries
                     .iter()
-                    .map(view::key)
+                    .map(|entry| plan::key(session, local, Some(&listing.path), entry))
                     .collect::<std::collections::HashSet<_>>();
                 browser.selected.retain(|key| keys.contains(key));
                 browser.listing = Some(listing);

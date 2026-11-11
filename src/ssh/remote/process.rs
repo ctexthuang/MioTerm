@@ -33,6 +33,7 @@ pub fn output(
     cancel: &AtomicBool,
     timeout: Duration,
 ) -> anyhow::Result<Output> {
+    ensure!(!cancel.load(Ordering::Relaxed), "ssh: operation cancelled");
     let mut child = Running(
         command
             .stdin(Stdio::piped())
@@ -127,5 +128,18 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn cancellation_prevents_starting_the_command() {
+        let mut command = Command::new("mioterm-cancelled-command-that-does-not-exist");
+        let error = output(
+            &mut command,
+            &[],
+            &AtomicBool::new(true),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "ssh: operation cancelled");
     }
 }

@@ -81,6 +81,7 @@ impl PortableHost {
             auth: self.auth,
             remember_secret: false,
             keepalive: Default::default(),
+            auto_reconnect: false,
             sync: self.sync.clone().into(),
         }
     }

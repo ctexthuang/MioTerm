@@ -73,7 +73,7 @@ impl Workspace {
             .min_h_0()
             .flex()
             .flex_col()
-            .children((quiet && !remote).then(|| {
+            .children((quiet && !remote && tab == PanelTab::Files).then(|| {
                 Caption::new(text(cx, "et.panel.no_folder", &[]))
                     .px_3()
                     .pt_2()
@@ -108,7 +108,7 @@ impl Workspace {
             )
             .child(div().flex_none().child(self.folder_actions(cx)))
             .child(body(tab == PanelTab::Monitor).child(self.monitor.clone()))
-            .child(body(tab != PanelTab::Monitor).child(files))
+            .child(body(matches!(tab, PanelTab::Git | PanelTab::Files)).child(files))
     }
 }
 

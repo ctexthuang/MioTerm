@@ -29,6 +29,7 @@ mod connections;
 mod events;
 mod folder;
 mod panel;
+mod reconnect;
 mod remote;
 mod rename;
 mod reorder;
@@ -103,6 +104,7 @@ pub struct Workspace {
     git: Entity<GitPanel>,
     hosts: Entity<HostPanel>,
     monitor: Entity<MonitorPanel>,
+    transfers: Entity<crate::ssh::transfers::Transfers>,
     sidebar_hosts: bool,
     ssh_error: Option<String>,
     _connect: Subscription,
@@ -134,6 +136,7 @@ impl Workspace {
     ) -> Self {
         let git = cx.new(|cx| GitPanel::new(launch.cwd.clone(), window, cx));
         let hosts = cx.new(|cx| HostPanel::new(window, cx));
+        let transfers = crate::ssh::transfers::Transfers::get(cx);
         let remote_files =
             cx.new(|cx| crate::ssh::files::panel::RemoteFiles::new(launch.cwd.clone(), window, cx));
         let remote_folder = cx.subscribe(
@@ -174,6 +177,7 @@ impl Workspace {
             git,
             hosts,
             monitor: cx.new(MonitorPanel::new),
+            transfers,
             sidebar_hosts: true,
             ssh_error: None,
             _connect: connect,
@@ -238,6 +242,8 @@ impl Workspace {
             remote_folder: None,
             control: None,
             disconnected: false,
+            recovery: Default::default(),
+            reconnecting: None,
             _events: events,
         });
     }
@@ -301,6 +307,9 @@ impl Workspace {
             return;
         }
         let session = self.sessions.remove(index);
+        self.transfers.update(cx, |tasks, cx| {
+            tasks.bind(session.terminal.entity_id().as_u64(), None, cx)
+        });
         log::info!("app: session {} closes", session.terminal.read(cx).pid());
         // Its textures leave the window's atlas with it.
         session
@@ -401,7 +410,10 @@ impl Render for Workspace {
                 div()
                     .relative()
                     .size_full()
-                    .children(shown)
+                    .flex()
+                    .flex_col()
+                    .children(self.connection_status(cx))
+                    .child(div().relative().flex_1().min_h_0().children(shown))
                     .child(wallpaper::ruler()),
             );
         if settings.show_sessions {

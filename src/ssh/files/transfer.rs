@@ -36,6 +36,46 @@ fn argument(path: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 impl Transfer {
+    fn validate_paths(&self, cancel: &AtomicBool) -> anyhow::Result<()> {
+        for item in &self.items {
+            let local = item.local.symlink_metadata();
+            match local {
+                Ok(info) => ensure!(
+                    !info.file_type().is_symlink()
+                        && info.is_dir() == item.directory
+                        && (info.is_file() || info.is_dir()),
+                    "sftp: local path changed type or became a symbolic link: {}",
+                    item.local.display()
+                ),
+                Err(error) if !self.upload && error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error).context("sftp: cannot read local transfer path"),
+            }
+            let parent = item.remote.parent()?;
+            let listing = self.connection.list(Some(&parent), cancel)?;
+            let name = item
+                .remote
+                .0
+                .rsplit(|byte| *byte == b'/')
+                .next()
+                .unwrap_or_default();
+            match listing.entries.iter().find(|entry| entry.name.0 == name) {
+                Some(entry) => ensure!(
+                    !entry.link
+                        && entry.directory == item.directory
+                        && (entry.regular || entry.directory),
+                    "sftp: remote path changed type or became a symbolic link: {}",
+                    item.remote.shown()
+                ),
+                None => ensure!(
+                    self.upload,
+                    "sftp: remote source no longer exists: {}",
+                    item.remote.shown()
+                ),
+            }
+        }
+        Ok(())
+    }
+
     pub fn batch(&self) -> anyhow::Result<Vec<u8>> {
         ensure!(!self.items.is_empty(), "sftp: no file selected");
         let mut batch = Vec::new();
@@ -116,6 +156,7 @@ impl Transfer {
     pub fn run(&self, cancel: &AtomicBool) -> anyhow::Result<()> {
         let batch = self.batch()?;
         self.connection.wait(cancel)?;
+        self.validate_paths(cancel)?;
         log::info!(
             "sftp: {} {} items on {}",
             if self.upload {

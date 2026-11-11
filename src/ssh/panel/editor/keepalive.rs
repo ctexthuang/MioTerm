@@ -68,5 +68,28 @@ impl Editor {
                     .text_color(cx.theme().colors.fg_muted)
                     .child(text(cx, "et.ssh.keepalive_hint", &[])),
             )
+            .child(
+                Switch::new("ssh-auto-reconnect", self.auto_reconnect)
+                    .label(text(cx, "et.ssh.auto_reconnect", &[]))
+                    .disabled(busy)
+                    .on_change({
+                        let owner = cx.entity();
+                        move |enabled, _, cx| {
+                            owner.update(cx, |panel, cx| {
+                                if let Some(editor) = &mut panel.editor {
+                                    editor.auto_reconnect = enabled;
+                                    log::info!("ssh: automatic reconnect draft enabled={enabled}");
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    }),
+            )
+            .child(
+                div()
+                    .text_size(cx.theme().text_size(TextSize::Xs))
+                    .text_color(cx.theme().colors.fg_muted)
+                    .child(text(cx, "et.ssh.reconnect_hint", &[])),
+            )
     }
 }

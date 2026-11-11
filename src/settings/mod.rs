@@ -96,6 +96,7 @@ impl Language {
 pub enum PanelTab {
     #[default]
     Git,
+    #[serde(alias = "transfers")]
     Files,
     Monitor,
 }

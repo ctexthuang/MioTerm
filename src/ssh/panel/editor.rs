@@ -29,6 +29,7 @@ pub(super) struct Editor {
     pub secret: Entity<TextInput>,
     pub original: Host,
     keepalive: crate::ssh::Keepalive,
+    auto_reconnect: bool,
 }
 
 impl Editor {
@@ -75,6 +76,7 @@ impl Editor {
             remember: host.remember_secret,
             secret,
             keepalive: host.keepalive,
+            auto_reconnect: host.auto_reconnect,
             original,
         }
     }
@@ -98,6 +100,7 @@ impl Editor {
             auth: self.auth,
             remember_secret: self.remember && self.auth.has_secret(),
             keepalive: self.keepalive,
+            auto_reconnect: self.auto_reconnect,
             sync: self.original.sync.clone(),
         };
         host.validate()?;

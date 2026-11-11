@@ -68,6 +68,7 @@ impl Archive {
             if let Some(saved) = same {
                 host.id = saved.id;
                 host.keepalive = saved.keepalive;
+                host.auto_reconnect = saved.auto_reconnect;
                 host.remember_secret = host.auth.has_secret()
                     && saved.remember_secret
                     && crate::ssh::auth::account(&saved) == crate::ssh::auth::account(&host);

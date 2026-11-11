@@ -1,24 +1,20 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ely_gpui_component::{
     buttons::{ButtonVariant, IconButton},
     feedback::Alert,
     forms::Input,
+    i18n::text,
     lists::{Tree, TreeNode},
-    primitives::{Icon, IconName, Severity},
+    menus::ContextMenu,
+    primitives::{Icon, IconName, Severity, Tooltip},
     theme::{ActiveTheme, ControlSize, TextSize},
     typography::{Caption, Ellipsis},
 };
 use gpui::{
     Context, Div, ExternalPaths, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, rems,
 };
 
 use super::RemoteFiles;
-use crate::ssh::files::Entry;
-
-pub(super) fn key(entry: &Entry) -> SharedString {
-    STANDARD.encode(&entry.name.0).into()
-}
 
 fn size(bytes: u64) -> String {
     let mut value = bytes as f64;
@@ -35,7 +31,7 @@ fn size(bytes: u64) -> String {
     }
 }
 
-fn tool(id: &'static str, icon: IconName, tip: &'static str) -> IconButton {
+fn tool(id: &'static str, icon: IconName, tip: impl Into<SharedString>) -> IconButton {
     IconButton::new(id, icon)
         .tooltip(tip)
         .variant(ButtonVariant::Ghost)
@@ -43,7 +39,8 @@ fn tool(id: &'static str, icon: IconName, tip: &'static str) -> IconButton {
 }
 
 impl RemoteFiles {
-    fn pane(&self, local: bool, cx: &Context<Self>) -> Div {
+    fn pane(&mut self, local: bool, cx: &Context<Self>) -> Div {
+        let request = self.menu_request(local);
         let browser = self.browser(local);
         let title = if local {
             "Local".to_string()
@@ -124,19 +121,20 @@ impl RemoteFiles {
         } else {
             &self.remote_path
         };
-        let (pick, open) = (cx.entity(), cx.entity());
+        let (pick, open, context) = (cx.entity(), cx.entity(), cx.entity());
         let rows = browser
             .listing
             .iter()
             .flat_map(|listing| &listing.entries)
             .map(|entry| {
-                let row = TreeNode::new(key(entry), entry.name.shown()).icon(if entry.link {
-                    IconName::Link
-                } else if entry.directory {
-                    IconName::Folder
-                } else {
-                    IconName::File
-                });
+                let row =
+                    TreeNode::new(self.key(local, entry), entry.name.shown()).icon(if entry.link {
+                        IconName::Link
+                    } else if entry.directory {
+                        IconName::Folder
+                    } else {
+                        IconName::File
+                    });
                 let row = if entry.directory {
                     row
                 } else {
@@ -165,8 +163,23 @@ impl RemoteFiles {
             })
         })
         .on_activate(move |key, _, cx| open.update(cx, |panel, cx| panel.activate(local, key, cx)))
+        .on_context(move |key, at, _, cx| {
+            context.update(cx, |panel, cx| panel.context(local, key, at, cx))
+        })
         .size_full();
+        let tree = ContextMenu::new(
+            if local {
+                "sftp-local-menu"
+            } else {
+                "sftp-remote-menu"
+            },
+            self.context_menu(local, cx),
+        )
+        .manual(request)
+        .size_full()
+        .child(tree);
         div()
+            .relative()
             .flex_1()
             .min_h_0()
             .flex()
@@ -238,7 +251,6 @@ impl RemoteFiles {
                 let enabled = !self.disconnected
                     && !browser.busy
                     && browser.listing.is_some()
-                    && self.transfer.is_none()
                     && self.pending.is_none();
                 pane.drag_over::<ExternalPaths>(move |style, _, _, cx| {
                     if enabled {
@@ -251,20 +263,25 @@ impl RemoteFiles {
                     drop.update(cx, |panel, cx| panel.drop_upload(paths.paths(), cx))
                 })
             })
+            .when(cx.has_active_drag(), |pane| {
+                pane.child(self.drop_surface(local, cx))
+            })
     }
 }
 
 impl Render for RemoteFiles {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (upload, download, cancel) = (cx.entity(), cx.entity(), cx.entity());
-        let busy = self.transfer.is_some();
-        let blocked = busy
+        let (upload, download) = (cx.entity(), cx.entity());
+        let tasks = cx.entity();
+        let active = self.transfers.read(cx).active();
+        let blocked = self.pending.is_some()
             || self.disconnected
             || self.local.busy
             || self.remote.busy
             || self.local.listing.is_none()
             || self.remote.listing.is_none();
         let controls = div()
+            .flex_none()
             .flex()
             .items_center()
             .gap_1()
@@ -291,26 +308,36 @@ impl Render for RemoteFiles {
                 .on_click(move |_, _, cx| download.update(cx, |panel, cx| panel.ask(false, cx))),
             )
             .child(
-                div().flex_1().min_w_0().children(
-                    self.transfer_status
-                        .as_ref()
-                        .map(|text| Ellipsis::new(text.clone())),
-                ),
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(cx.theme().text_size(TextSize::Sm))
+                    .text_color(cx.theme().colors.fg_muted)
+                    .children((active > 0).then(|| {
+                        Ellipsis::new(text(
+                            cx,
+                            "et.transfer.active",
+                            &[("count", &active.to_string())],
+                        ))
+                    })),
             )
-            .when(busy, |row| {
-                row.child(
-                    tool("sftp-cancel", IconName::X, "Cancel transfer").on_click(
-                        move |_, _, cx| {
-                            cancel.update(cx, |panel, cx| {
-                                if let Some(cancel) = &panel.transfer {
-                                    cancel.0.store(true, std::sync::atomic::Ordering::Relaxed);
-                                }
-                                cx.notify();
-                            })
-                        },
-                    ),
+            .child(
+                tool(
+                    "sftp-tasks",
+                    IconName::ArrowDownUp,
+                    text(cx, "et.panel.transfers", &[]),
                 )
-            });
+                .when(self.show_transfers, |button| {
+                    button.variant(ButtonVariant::Primary)
+                })
+                .on_click(move |_, _, cx| {
+                    tasks.update(cx, |panel, cx| {
+                        panel.show_transfers = !panel.show_transfers;
+                        log::info!("sftp: inline tasks visible: {}", panel.show_transfers);
+                        cx.notify();
+                    });
+                }),
+            );
         let dismiss = cx.entity();
         div()
             .size_full()
@@ -318,6 +345,59 @@ impl Render for RemoteFiles {
             .flex_col()
             .child(self.pane(true, cx))
             .child(controls)
+            .when(self.show_transfers, |panel| {
+                panel.child(
+                    div()
+                        .flex_1()
+                        .flex_grow(0.85)
+                        .min_h_0()
+                        .max_h(rems(8.))
+                        .overflow_hidden()
+                        .border_b_1()
+                        .border_color(cx.theme().colors.border)
+                        .flex()
+                        .flex_col()
+                        .children(self.connection.as_ref().map(|connection| {
+                            let mode = if connection.socket.is_some() {
+                                "et.transfer.channel_shared"
+                            } else {
+                                "et.transfer.channel_separate"
+                            };
+                            let destination = connection.host.destination();
+                            let endpoint = destination.clone();
+                            let mode = text(cx, mode, &[]);
+                            div()
+                                .id("sftp-channel")
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .px_2()
+                                .py_1()
+                                .text_size(cx.theme().text_size(TextSize::Sm))
+                                .text_color(cx.theme().colors.fg_muted)
+                                .hoverable_tooltip(Tooltip::rich(move |_, _| {
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(endpoint.clone())
+                                        .child(mode.clone())
+                                        .into_any_element()
+                                }))
+                                .child(
+                                    Icon::new(IconName::Server).color(cx.theme().colors.fg_muted),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(Ellipsis::new(format!("SFTP · {destination}"))),
+                                )
+                        }))
+                        .child(div().flex_1().min_h_0().child(self.transfers.clone())),
+                )
+            })
             .children(self.transfer_error.as_ref().map(|error| {
                 div()
                     .id("sftp-error-scroll")

@@ -14,6 +14,7 @@ mod keys;
 pub mod panel;
 mod prepare;
 mod private;
+pub mod reconnect;
 mod records;
 pub mod remote;
 pub mod shell;
@@ -21,6 +22,7 @@ mod store;
 pub mod sync;
 #[cfg(test)]
 mod tests;
+pub mod transfers;
 pub(crate) mod vault;
 
 pub use auth::Authentication;
@@ -44,6 +46,8 @@ pub struct Host {
     pub remember_secret: bool,
     #[serde(default, skip_serializing_if = "Keepalive::is_default")]
     pub keepalive: Keepalive,
+    #[serde(default, skip_serializing_if = "reconnect::disabled")]
+    pub auto_reconnect: bool,
     #[serde(default, skip_serializing_if = "Record::is_empty")]
     pub sync: Box<Record>,
 }
@@ -61,6 +65,7 @@ impl Default for Host {
             auth: Authentication::default(),
             remember_secret: false,
             keepalive: Keepalive::default(),
+            auto_reconnect: false,
             sync: Box::default(),
         }
     }
@@ -169,6 +174,7 @@ impl Host {
             recent.auth = self.auth;
             recent.remember_secret = self.remember_secret;
             recent.keepalive = self.keepalive;
+            recent.auto_reconnect = self.auto_reconnect;
             recent.sync = self.sync.clone();
         }
     }

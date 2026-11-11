@@ -6,6 +6,13 @@ fn defaults_are_valid() {
 }
 
 #[test]
+fn a_saved_transfer_tab_now_opens_files() {
+    let settings: Settings = serde_json::from_str(r#"{"panel":"transfers"}"#).unwrap();
+    assert_eq!(settings.panel, PanelTab::Files);
+    assert_eq!(serde_json::to_value(settings).unwrap()["panel"], "files");
+}
+
+#[test]
 fn mioterm_settings_keep_sync_and_monitor_while_new_fields_take_defaults() {
     let settings: Settings = serde_json::from_value(serde_json::json!({
         "theme": "catppuccin-mocha", "panel": "monitor",

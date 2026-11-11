@@ -49,8 +49,8 @@ impl RemoteFiles {
     pub(super) fn drop_upload(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
         let plan = || {
             ensure!(
-                self.transfer.is_none() && self.pending.is_none(),
-                "sftp: a transfer is already pending or running"
+                self.pending.is_none(),
+                "sftp: a transfer is already pending confirmation"
             );
             ensure!(!self.disconnected, "sftp: SSH session disconnected");
             ensure!(

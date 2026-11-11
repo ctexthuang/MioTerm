@@ -131,6 +131,54 @@ fn remote_git_and_sftp_use_the_authenticated_connection() {
 
 #[test]
 #[ignore = "requires an isolated loopback SSH master in ELY_SSH_TEST_SOCKET"]
+fn queued_transfers_recheck_sources_and_destinations_before_writing() {
+    use std::os::unix::fs::symlink;
+
+    let remote = Remote {
+        session: 0,
+        host: Host {
+            address: "127.0.0.1".into(),
+            port: std::env::var("ELY_SSH_TEST_PORT").unwrap().parse().unwrap(),
+            user: std::env::var("USER").unwrap(),
+            ..Host::default()
+        },
+        socket: Some(std::env::var_os("ELY_SSH_TEST_SOCKET").unwrap().into()),
+    };
+    let root = PathBuf::from("/private/tmp")
+        .join(format!("ely-queued-transfer-check-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let source = root.join("source");
+    let target = root.join("target");
+    let protected = root.join("protected");
+    fs::write(&source, b"source").unwrap();
+    fs::write(&protected, b"must remain unchanged").unwrap();
+    let transfer = Transfer {
+        connection: remote,
+        upload: true,
+        items: vec![TransferItem {
+            local: source.clone(),
+            remote: RemotePath::from_path(&target),
+            directory: false,
+        }],
+    };
+    transfer.batch().unwrap();
+    fs::remove_file(&source).unwrap();
+    symlink(&protected, &source).unwrap();
+    let cancel = AtomicBool::new(false);
+    let error = transfer.run(&cancel).unwrap_err();
+    assert!(error.to_string().contains("local path changed type"));
+    assert!(!target.exists());
+    fs::remove_file(&source).unwrap();
+    fs::write(&source, b"source").unwrap();
+    symlink(&protected, &target).unwrap();
+    let error = transfer.run(&cancel).unwrap_err();
+    assert!(error.to_string().contains("remote path changed type"));
+    assert_eq!(fs::read(&protected).unwrap(), b"must remain unchanged");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "requires an isolated loopback SSH master in ELY_SSH_TEST_SOCKET"]
 fn remote_shell_reports_cd_over_an_actual_ssh_channel() {
     use std::{ffi::OsStr, time::Duration};
     let remote = Remote {

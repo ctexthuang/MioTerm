@@ -23,10 +23,14 @@ impl RemoteFiles {
     fn tick(&mut self, cx: &mut Context<Self>) {
         let settings = SettingsStore::get(cx);
         if !self.front
+            || cx.has_active_drag()
             || !settings.show_panel
             || settings.panel != PanelTab::Files
             || self.disconnected
-            || self.transfer.is_some()
+            || self
+                .connection
+                .as_ref()
+                .is_some_and(|connection| self.transfers.read(cx).busy(connection))
             || self.pending.is_some()
         {
             return;
