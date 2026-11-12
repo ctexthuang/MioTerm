@@ -1,10 +1,16 @@
 //! Windows: the icon as resource 1, ConPTY beside each executable.
 
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/icons");
     println!("cargo:rerun-if-changed=vendor/conpty");
+    println!("cargo:rerun-if-changed=src/ssh/transport.rs");
+    println!("cargo:rerun-if-changed=src/ssh/environment.rs");
     embed_resource::compile(
         "assets/icons/elyterminal.rc",
         embed_resource::ParamsIncludeDirs(["assets/icons"]),
@@ -21,6 +27,7 @@ fn conpty() {
     let arch = env::var("CARGO_CFG_TARGET_ARCH").expect("build: cargo names no target arch");
     let from = PathBuf::from("vendor/conpty").join(&arch);
     let out = PathBuf::from(env::var("OUT_DIR").expect("build: cargo names no OUT_DIR"));
+    let transport = transport(&out);
     let profile = out
         .ancestors()
         .nth(3)
@@ -46,5 +53,25 @@ fn conpty() {
                 )
             });
         }
+        fs::copy(&transport, dir.join("mioterm-ssh.exe"))
+            .unwrap_or_else(|e| panic!("build: SSH transport helper not copied: {e}"));
     }
+}
+
+fn transport(out: &Path) -> PathBuf {
+    let path = out.join("mioterm-ssh.exe");
+    let status = Command::new(env::var_os("RUSTC").expect("build: cargo names no rustc"))
+        .args(["--edition=2024", "--crate-name", "mioterm_ssh", "--target"])
+        .arg(env::var_os("TARGET").expect("build: cargo names no target"))
+        .args(["-C", "opt-level=s", "-C", "target-feature=+crt-static"])
+        .arg("src/ssh/transport.rs")
+        .arg("-o")
+        .arg(&path)
+        .status()
+        .expect("build: cannot compile the SSH transport helper");
+    assert!(
+        status.success(),
+        "build: SSH transport helper compilation failed"
+    );
+    path
 }

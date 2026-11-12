@@ -218,13 +218,39 @@ pub fn spawn(
 
 #[cfg(unix)]
 fn start(launch: &Launch, env: HashMap<String, String>, size: WindowSize) -> std::io::Result<Raw> {
-    super::unix::spawn(launch.program.as_ref(), &launch.cwd, &env, size)
+    super::unix::spawn(
+        launch.program.as_ref(),
+        &launch.cwd,
+        &env,
+        size,
+        launch.remote,
+    )
 }
 
 #[cfg(windows)]
 fn start(launch: &Launch, env: HashMap<String, String>, size: WindowSize) -> std::io::Result<Raw> {
+    let program = if launch.remote {
+        let (program, args) = launch.program.as_ref().ok_or_else(|| {
+            std::io::Error::other("ssh: remote terminal has no transport program")
+        })?;
+        let helper = std::env::current_exe()?.with_file_name("mioterm-ssh.exe");
+        if !helper.is_file() {
+            return Err(std::io::Error::other(
+                "ssh: mioterm-ssh.exe is missing beside the application",
+            ));
+        }
+        let helper = helper
+            .to_str()
+            .ok_or_else(|| std::io::Error::other("ssh: transport helper path is not UTF-8"))?;
+        let mut transport = vec![program.clone()];
+        transport.extend(args.iter().cloned());
+        log::debug!("ssh: console helper removes client locale variables before transport starts");
+        Some((helper.to_owned(), transport))
+    } else {
+        launch.program.clone()
+    };
     let options = tty::Options {
-        shell: launch.program.clone().map(|(program, args)| {
+        shell: program.map(|(program, args)| {
             // alacritty puts the program into the command line as it is, and Windows reads the first word of it, so a path with a space needs its quotes.
             let program = if program.contains(' ') {
                 format!("\"{program}\"")

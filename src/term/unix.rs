@@ -73,6 +73,7 @@ pub(crate) fn spawn(
     cwd: &Path,
     env: &HashMap<String, String>,
     size: WindowSize,
+    remote: bool,
 ) -> io::Result<Pty> {
     let pair = openpty(None, Some(&size.to_winsize()))?;
     let (master, slave) = (pair.controller, pair.user);
@@ -93,6 +94,10 @@ pub(crate) fn spawn(
     command.stdout(slave.try_clone()?);
     command.env("USER", &user.name).env("HOME", &user.home);
     command.envs(env);
+    if remote {
+        crate::ssh::environment::configure(&mut command);
+        log::debug!("ssh: transport starts without client locale variables");
+    }
     command.env_remove("XDG_ACTIVATION_TOKEN");
     command.env_remove("DESKTOP_STARTUP_ID");
     let folder = CString::new(cwd.as_os_str().as_bytes())?;

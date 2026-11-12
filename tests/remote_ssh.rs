@@ -230,3 +230,67 @@ fn remote_shell_reports_cd_over_an_actual_ssh_channel() {
     );
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+#[ignore = "requires an isolated loopback SSH master in ELY_SSH_TEST_SOCKET"]
+fn client_locales_are_not_forwarded_to_the_remote_shell() {
+    use std::{ffi::OsStr, time::Duration};
+
+    if std::env::var_os("MIOTERM_LOCALE_TEST_CHILD").is_none() {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args([
+            "--exact",
+            "client_locales_are_not_forwarded_to_the_remote_shell",
+            "--ignored",
+            "--nocapture",
+        ]);
+        command.env("MIOTERM_LOCALE_TEST_CHILD", "1");
+        for name in ["LANG", "LC_ALL", "LC_TIME"] {
+            command.env(name, "mioterm_missing_locale");
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let remote = Remote {
+        host: Host {
+            port: std::env::var("ELY_SSH_TEST_PORT").unwrap().parse().unwrap(),
+            ..Host::default()
+        },
+        socket: Some(std::env::var_os("ELY_SSH_TEST_SOCKET").unwrap().into()),
+        session: 0,
+    };
+    let args = [
+        "python3",
+        "-c",
+        "import locale, os; assert all(os.environ.get(k) != 'mioterm_missing_locale' for k in ('LANG', 'LC_ALL', 'LC_TIME')); locale.setlocale(locale.LC_ALL, ''); print('remote locale valid')",
+    ];
+    let source = remote.command(&args.map(OsStr::new)).unwrap();
+    let mut command = Command::new(source.get_program());
+    command.args(["-o", "SendEnv=*"]).args(source.get_args());
+    for (key, value) in source.get_envs() {
+        if let Some(value) = value {
+            command.env(key, value);
+        } else {
+            command.env_remove(key);
+        }
+    }
+    let output = elyterminal::ssh::remote::process::output(
+        &mut command,
+        b"",
+        &AtomicBool::new(false),
+        Duration::from_secs(15),
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"remote locale valid\n");
+}

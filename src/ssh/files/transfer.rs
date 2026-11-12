@@ -145,6 +145,7 @@ impl Transfer {
         };
         command.arg("--").arg(destination);
         super::super::auth::configure_command(host, &mut command)?;
+        super::super::environment::configure(&mut command);
         #[cfg(windows)]
         std::os::windows::process::CommandExt::creation_flags(
             &mut command,

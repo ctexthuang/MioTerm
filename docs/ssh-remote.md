@@ -108,6 +108,13 @@ remote paths as local folders.
 - Background clients always use strict host-key verification. They enable
   askpass only for an explicitly saved credential, never accept unknown hosts,
   and otherwise use BatchMode.
+- Managed SSH terminals, SFTP, Git and monitoring use the server's locale.
+  Their child processes omit inherited `LANG`, `LANGUAGE` and `LC_*`, including
+  when SSH config uses `SendEnv *`. OpenSSH reads its own configuration normally;
+  relative includes and distribution-specific system config paths keep working.
+  Windows packages include a console helper, `mioterm-ssh.exe`, which clears
+  these variables after ConPTY builds its environment. Local terminals retain
+  their locale. Explicit SSH `SetEnv` entries remain user-controlled.
 - Gitee/WebDAV sync includes authentication mode and actual selected key material.
   Explicit credential inclusion also transfers saved passwords/passphrases inside
   the encrypted archive. Keepalive and reconnect preferences remain local.

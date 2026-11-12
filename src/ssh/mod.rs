@@ -8,6 +8,7 @@ use crate::term::{Launch, Quote};
 pub mod auth;
 pub mod control;
 mod deleted;
+pub(crate) mod environment;
 pub mod files;
 mod keepalive;
 mod keys;

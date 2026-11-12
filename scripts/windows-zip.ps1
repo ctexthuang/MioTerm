@@ -10,7 +10,7 @@ $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
 $out = Join-Path $target 'release'
 $zip = Join-Path $out "MioTerm-$version-windows-$arch.zip"
 Copy-Item 'vendor/conpty/LICENSE' (Join-Path $out 'LICENSE-conpty') -ErrorAction Stop
-$files = 'elyterminal.exe', 'conpty.dll', 'OpenConsole.exe', 'LICENSE-conpty' | ForEach-Object { Join-Path $out $_ }
+$files = 'elyterminal.exe', 'mioterm-ssh.exe', 'conpty.dll', 'OpenConsole.exe', 'LICENSE-conpty' | ForEach-Object { Join-Path $out $_ }
 $licenses = Join-Path $out 'licenses'
 New-Item -ItemType Directory -Path $licenses -Force -ErrorAction Stop | Out-Null
 Copy-Item 'LICENSE', 'LICENSE-GHOSTTY' -Destination $licenses -ErrorAction Stop

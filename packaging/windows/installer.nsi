@@ -7,7 +7,7 @@ ManifestDPIAware true
   !error "pass /DVERSION"
 !endif
 !ifndef STAGE
-  !error "pass /DSTAGE, the folder holding elyterminal.exe, conpty.dll, OpenConsole.exe and LICENSE-conpty"
+  !error "pass /DSTAGE, the folder holding elyterminal.exe, mioterm-ssh.exe, ConPTY and its license"
 !endif
 !ifndef OUTFILE
   !error "pass /DOUTFILE"
@@ -83,6 +83,7 @@ Section "Install"
   Call ElyFree
   SetOutPath "$INSTDIR"
   File "${STAGE}\elyterminal.exe"
+  File "${STAGE}\mioterm-ssh.exe"
   File "${STAGE}\conpty.dll"
   File "${STAGE}\OpenConsole.exe"
   File "${STAGE}\LICENSE-conpty"
@@ -107,6 +108,7 @@ SectionEnd
 Section "Uninstall"
   Call un.ElyFree
   !insertmacro ElyGone "elyterminal.exe"
+  !insertmacro ElyGone "mioterm-ssh.exe"
   !insertmacro ElyGone "conpty.dll"
   !insertmacro ElyGone "OpenConsole.exe"
   !insertmacro ElyGone "LICENSE-conpty"

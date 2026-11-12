@@ -1,14 +1,15 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ely_gpui_component::{
     buttons::{Button, ButtonVariant, IconButton},
     feedback::Alert,
     forms::{Input, InputEvent, TextInput},
+    layout::Collapsible,
     lists::{List, ListItem},
     menus::{Menu, MenuItem, OverflowMenu},
     overlays::ConfirmDialog,
     primitives::{Icon, IconName, Severity},
-    theme::{ActiveTheme, ControlSize, TextSize},
+    theme::ControlSize,
     typography::Caption,
 };
 use gpui::{
@@ -19,6 +20,7 @@ use gpui::{
 use super::{Host, HostStore};
 
 mod editor;
+mod groups;
 use editor::Editor;
 
 pub struct Connect(pub Host);
@@ -29,6 +31,8 @@ pub struct HostPanel {
     deleting: Option<Host>,
     error: Option<String>,
     recent_open: bool,
+    collapsed_groups: BTreeSet<String>,
+    search_collapsed_groups: BTreeSet<String>,
     _search: Subscription,
     _store: Subscription,
     saving: Option<gpui::Task<()>>,
@@ -43,8 +47,9 @@ impl HostPanel {
                 .label("Search hosts")
                 .placeholder("Search hosts")
         });
-        let changed = cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+        let changed = cx.subscribe(&search, |panel, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Changed) {
+                panel.search_collapsed_groups.clear();
                 cx.notify();
             }
         });
@@ -55,6 +60,8 @@ impl HostPanel {
             deleting: None,
             error: None,
             recent_open: false,
+            collapsed_groups: BTreeSet::new(),
+            search_collapsed_groups: BTreeSet::new(),
             _search: changed,
             _store: store,
             saving: None,
@@ -315,31 +322,22 @@ impl Render for HostPanel {
         let data = HostStore::get(cx);
         let mut groups: BTreeMap<&str, Vec<&Host>> = BTreeMap::new();
         for host in data.hosts.iter().filter(|host| host.matches(&query)) {
-            groups
-                .entry(if host.group.is_empty() {
-                    "Ungrouped"
-                } else {
-                    &host.group
-                })
-                .or_default()
-                .push(host);
+            groups.entry(&host.group).or_default().push(host);
         }
-        let heading = |text: String| {
-            div()
-                .px_2()
-                .pt_3()
-                .pb_1()
-                .text_size(cx.theme().text_size(TextSize::Xs))
-                .text_color(cx.theme().colors.fg_muted)
-                .child(text)
-        };
         let mut body = div().flex().flex_col().gap_1();
         for (group, mut hosts) in groups {
             hosts.sort_by_key(|host| host.label().to_lowercase());
+            let count = hosts.len();
             let rows = hosts.into_iter().map(|host| self.host_row(host, false, cx));
             body = body
-                .child(heading(group.to_string()))
-                .child(List::new().children(rows));
+                .child(self.group_heading(group, count, !query.is_empty(), cx))
+                .child(
+                    Collapsible::new(
+                        format!("ssh-group-body-{group}"),
+                        self.group_open(group, !query.is_empty()),
+                    )
+                    .child(List::new().children(rows)),
+                );
         }
         let empty = data.hosts.is_empty();
         if empty || !data.hosts.iter().any(|host| host.matches(&query)) {

@@ -9,6 +9,10 @@ use crate::term::{
 
 /// A PowerShell script under the bundled ConPTY: pid and events.
 fn powershell(script: &str) -> (u32, Vec<PtyEvent>) {
+    powershell_on(script, false)
+}
+
+fn powershell_on(script: &str, remote: bool) -> (u32, Vec<PtyEvent>) {
     crate::testlog::init();
     let wide: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(wide);
@@ -18,9 +22,16 @@ fn powershell(script: &str) -> (u32, Vec<PtyEvent>) {
             vec!["-NoProfile".into(), "-EncodedCommand".into(), encoded],
         )),
         cwd: std::env::temp_dir(),
-        env: Vec::new(),
+        env: if remote {
+            vec![
+                ("LC_ALL".into(), "mioterm_missing_locale".into()),
+                ("LANG".into(), "mioterm_missing_locale".into()),
+            ]
+        } else {
+            Vec::new()
+        },
         reports: false,
-        remote: false,
+        remote,
         quote: Quote::PowerShell,
     };
     let (pty, mut events) = spawn(&launch, (80, 24), (8, 16), config(&Settings::default()))
@@ -40,6 +51,21 @@ fn powershell(script: &str) -> (u32, Vec<PtyEvent>) {
         seen
     });
     (pty.pid, events)
+}
+
+#[test]
+fn remote_console_helper_preserves_output_and_clears_locale() {
+    let (_, events) = powershell_on(
+        "if ($env:LC_ALL -or $env:LANG) { throw 'client locale reached transport' }; \
+         $e = [char]27; [Console]::Out.Write(\"${e}]2;remote-transport-ok`a\"); \
+         Start-Sleep -Milliseconds 500",
+        true,
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, PtyEvent::Title(title) if title == "remote-transport-ok"))
+    );
 }
 
 #[test]

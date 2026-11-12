@@ -130,6 +130,20 @@ fn a_program_prints_into_the_grid_with_its_variables_and_id() {
 }
 
 #[test]
+fn ssh_transport_omits_client_locale_but_local_terminals_keep_it() {
+    let remote = run_on(
+        "test -z \"${LANG+x}${LANGUAGE+x}${LC_ALL+x}${LC_CTYPE+x}\" && printf remote-locale-ok",
+        (40, 4),
+        true,
+    );
+    assert!(remote.success);
+    assert_eq!(remote.text, "remote-locale-ok");
+    let local = run("test \"${LANG+x}\" = x && printf local-locale-ok", (40, 4));
+    assert!(local.success);
+    assert_eq!(local.text, "local-locale-ok");
+}
+
+#[test]
 fn a_program_reads_the_terminal_s_name_and_version() {
     let ran = run(
         "printf '%s %s' \"$TERM_PROGRAM\" \"$TERM_PROGRAM_VERSION\"",

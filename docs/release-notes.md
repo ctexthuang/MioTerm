@@ -1,4 +1,4 @@
-# MioTerm 0.1.3
+# MioTerm 0.1.4
 
 MioTerm is an independent fork of ELYTerminal, extended with SSH hosts,
 SFTP transfers, remote Git, system monitoring and encrypted Gitee/WebDAV sync.
@@ -8,36 +8,22 @@ Upstream: https://github.com/ELY-Open-Source/ELYTerminal
 The upstream copyright and MIT license are retained. Bundled license
 files are included with each package. This is not an upstream release.
 
-## New In 0.1.3
+## New In 0.1.4
 
-- Integrated ELYTerminal 0.2.4 at upstream commit `9504b53`, retaining MioTerm's
-  SSH, SFTP, remote Git, monitoring and encrypted Gitee/WebDAV synchronization.
-- Added inline SFTP tasks between the local and remote file panes. Upload or
-  download through context menus, drag files between panes, or drop external
-  files to upload. Confirmed tasks open the transfer area automatically and
-  show their channel, destination, state and elapsed time. Queues survive panel
-  and session switches, with cancellation and retry from the beginning.
-- Added manual SSH reconnection and optional automatic reconnection after a
-  previously established connection fails. Reconnection retains the session's
-  position, name and remote directory. Normal exits do not trigger retries;
-  automatic attempts are bounded and can be stopped. Reconnection does not
-  recover remote processes or replay commands; transfer queues are not persisted.
-- Added configurable shortcuts with recording, reset and conflict detection,
-  plus terminal history clearing for local and SSH sessions. Unix retains the
-  current prompt; Windows clears scrollback while preserving ConPTY's screen.
-- Added optional authenticated local CLI control to list sessions, read retained
-  output and send text or keys. SSH entries report remote folders and connection
-  state; disconnected sessions reject input. Control is off by default and its
-  local token is excluded from cloud synchronization.
-- Added independent background-picture opacity, gradient colors and angle,
-  plus a configurable gradient mask for a nonrepeating picture.
-- Added folder selection from the profiles menu, routed to the active local or
-  remote session. File-tree drops quote the path and focus the terminal. Both
-  local and managed SSH shells report MioTerm's terminal name and version.
-- Added per-user Windows NSIS installers for x86_64 and ARM64, alongside portable
-  archives, and integrated upstream Windows input and PowerShell policy changes.
-- Preserved the existing application data directories, default closed sidebars,
-  theme colors, Ely desktop character and animated session status marks.
+- Added collapsible SSH groups with host counts, keyboard activation and theme
+  colors. Search results use separate collapse state, leaving the normal list's
+  state intact. Collapse state stays in the current panel and is not synchronized.
+- Fixed client locale variables reaching SSH servers that do not provide those
+  locales. Managed SSH terminals, SFTP, remote Git and monitoring now omit
+  inherited `LANG`, `LANGUAGE` and `LC_*`, including with `SendEnv *`.
+- Preserved native OpenSSH configuration parsing, including relative `Include`
+  paths. Local terminals retain their locale; explicit SSH `SetEnv` entries
+  remain user-controlled. Open a new connection with this build to apply the fix.
+- Added a standard-library-only Windows console helper, `mioterm-ssh.exe`, to
+  clear locale variables after ConPTY assembles its environment. Portable ZIPs
+  and per-user installers include the helper beside the main executable.
+- Retained the ELYTerminal 0.2.4 baseline at `9504b53`, inline SFTP tasks, SSH
+  reconnection, configurable shortcuts, local CLI control and encrypted sync.
 
 Upgrade every device before sharing the new record vault. Older binaries cannot
 read the new schema; do not use them against a migrated local data folder. The
@@ -55,18 +41,18 @@ Windows current-user ACLs, not by an additional local vault encryption layer.
 Passwords and key passphrases remain in the encrypted application credential
 vault. Cloud archives use the separate synchronization passphrase.
 
-Local integration verification passed 698 core tests, font loading, isolated
-application-vault, child-process askpass and encrypted RSA PEM import tests.
-Three actual loopback SSH tests covered remote Git/SFTP, changed transfer-path
-types, and remote directory/terminal-version reports. Native macOS checks covered
-custom shortcuts, local and SSH CLI operations, disconnected-input refusal,
-SSH history clearing, quoted-path dragging and inline SFTP upload completion.
+Local verification passed 701 core tests, font loading, isolated application-vault,
+child-process askpass and encrypted RSA PEM import tests. Transport-helper tests
+covered locale removal, argument preservation, standard input/output and exit
+status. Four actual loopback SSH tests covered `SendEnv *`, remote Git/SFTP,
+changed transfer-path types and remote directory/terminal-version reports.
 All-target Clippy with warnings denied, formatting, handwritten-file size checks
-and the release build passed. Four environment-dependent shell tests were
-filtered and one cloud test stayed ignored. Live Gitee, production SSH, native
-Windows/Linux runtime and Windows installer execution were not verified locally.
-Windows typed-space diagnostics are included; the reported black-block issue is
-not claimed fixed. Platform checks and packaging run in the tag-triggered workflow.
+and the debug build passed. Four environment-dependent shell tests were filtered
+and one cloud test stayed ignored. A Windows ConPTY regression test was added;
+native Windows/Linux runtime, Windows installer execution, live Gitee and
+production SSH were not verified locally. Windows typed-space diagnostics remain;
+the reported black-block issue is not claimed fixed. Platform checks and
+packaging run in the tag-triggered workflow.
 
 ## Packages
 

@@ -81,6 +81,7 @@ impl Remote {
             .args(&options[1..]);
         command.arg(quoted(args)?);
         super::auth::configure_command(&self.host, &mut command)?;
+        super::environment::configure(&mut command);
         #[cfg(windows)]
         std::os::windows::process::CommandExt::creation_flags(
             &mut command,
